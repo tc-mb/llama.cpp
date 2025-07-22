@@ -3176,7 +3176,7 @@ struct llava_uhd {
         bool padding_refined = false;  // if true, refine image will be padded to the grid size (e.g. llava-1.6)
     };
 
-    static slice_instructions get_slice_instructions(struct clip_ctx * ctx, const clip_image_size & original_size) {
+    static slice_instructions get_slice_instructions(struct clip_ctx * ctx, const clip_image_size & original_size, bool minicpmv_video_mode = false) {
         slice_instructions res;
         const int patch_size      = clip_get_patch_size(ctx);
         const int slice_size      = clip_get_image_size(ctx);
@@ -3186,7 +3186,7 @@ struct llava_uhd {
         bool has_slices    = original_size.width > slice_size || original_size.height > slice_size;
         const bool has_pinpoints = !ctx->model.hparams.image_res_candidates.empty();
 
-        has_slices = false;
+        if (minicpmv_video_mode) has_slices = false;
         if (!has_slices) {
             // skip slicing logic
             res.overview_size = clip_image_size{slice_size, slice_size};
@@ -3442,7 +3442,7 @@ private:
 
 // returns the normalized float tensor for llava-1.5, for spatial_unpad with anyres processing for llava-1.6 it returns the normalized image patch tensors as a vector
 // res_imgs memory is being allocated here, previous allocations will be freed if found
-bool clip_image_preprocess(struct clip_ctx * ctx, const clip_image_u8 * img, struct clip_image_f32_batch * res_imgs) {
+bool clip_image_preprocess(struct clip_ctx * ctx, const clip_image_u8 * img, struct clip_image_f32_batch * res_imgs, bool minicpmv_video_mode) {
     clip_image_size original_size{img->nx, img->ny};
     bool pad_to_square = true;
     auto & params = ctx->model.hparams;
@@ -3452,7 +3452,7 @@ bool clip_image_preprocess(struct clip_ctx * ctx, const clip_image_u8 * img, str
     }
 
     if (clip_is_minicpmv(ctx)) {
-        auto const inst = llava_uhd::get_slice_instructions(ctx, original_size);
+        auto const inst = llava_uhd::get_slice_instructions(ctx, original_size, minicpmv_video_mode = minicpmv_video_mode);
         std::vector<clip_image_u8_ptr> imgs = llava_uhd::slice_image(img, inst);
 
         for (size_t i = 0; i < imgs.size(); ++i) {

@@ -53,6 +53,8 @@ mtmd_ios_params mtmd_ios_params_default(void);
 // image_path: image path
 int mtmd_ios_prefill_image(mtmd_ios_context * ctx, const std::string & image_path);
 
+int mtmd_ios_prefill_frame(mtmd_ios_context * ctx, const std::string & image_path);
+
 // Prefill text, returns 0 on success, -1 on failure
 // Parameters:
 // ctx: context

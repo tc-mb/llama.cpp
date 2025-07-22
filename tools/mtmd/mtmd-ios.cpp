@@ -198,6 +198,56 @@ int mtmd_ios_prefill_image(mtmd_ios_context* ctx, const std::string& image_path)
     return 0;
 }
 
+int mtmd_ios_prefill_frame(mtmd_ios_context* ctx, const std::string& image_path) {
+
+    if (!ctx || image_path.empty()) {
+        return -1;
+    }
+    
+    mtmd::bitmap bmp(mtmd_helper_bitmap_init_from_file(ctx->ctx_vision.get(), image_path.c_str()));
+    if (!bmp.ptr) {
+        set_error(ctx, "Failed to load image from file: " + image_path);
+        return -1;
+    }
+    ctx->bitmaps.entries.push_back(std::move(bmp));
+    
+    mtmd_input_text text;
+    text.text = mtmd_default_marker();
+    text.add_special = ctx->n_past == 0;
+    text.parse_special = true;
+    
+    mtmd::input_chunks chunks(mtmd_input_chunks_init());
+    auto bitmaps_c_ptr = ctx->bitmaps.c_ptr();
+    int32_t res = mtmd_tokenize_video(ctx->ctx_vision.get(),
+                        chunks.ptr.get(),
+                        &text,
+                        bitmaps_c_ptr.data(),
+                        bitmaps_c_ptr.size());
+    if (res != 0) {
+        set_error(ctx, "Failed to tokenize image");
+        return -1;
+    }
+    
+    ctx->bitmaps.entries.clear();
+    
+    llama_pos new_n_past;
+    if (mtmd_helper_eval_chunks(ctx->ctx_vision.get(),
+                ctx->lctx,
+                chunks.ptr.get(),
+                ctx->n_past,
+                0,
+                1024,
+                false,
+                &new_n_past)) {
+        set_error(ctx, "Failed to eval image");
+        return -1;
+    }
+    
+    ctx->n_past = new_n_past;
+    
+    return 0;
+}
+
 
 
 int mtmd_ios_prefill_text(mtmd_ios_context* ctx, const std::string& text, const std::string& role) {

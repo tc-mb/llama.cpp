@@ -383,7 +383,7 @@ struct mtmd_tokenizer {
         string_replace_all(input_text, MTMD_DEFAULT_IMAGE_MARKER, ctx->media_marker);
     }
 
-    int32_t tokenize(mtmd_input_chunks * output) {
+    int32_t tokenize(mtmd_input_chunks * output, bool minicpmv_video_mode = false) {
         cur.entries.clear();
         std::vector<std::string> parts = split_text(input_text, ctx->media_marker);
         size_t i_bm = 0; // index of the current bitmap
@@ -396,7 +396,7 @@ struct mtmd_tokenizer {
                     return 1;
                 }
                 const mtmd_bitmap * bitmap = bitmaps[i_bm++];
-                int32_t res = add_media(bitmap);
+                int32_t res = add_media(bitmap, minicpmv_video_mode=minicpmv_video_mode);
                 if (res != 0) {
                     return res;
                 }
@@ -467,7 +467,7 @@ struct mtmd_tokenizer {
         }
     }
 
-    int32_t add_media(const mtmd_bitmap * bitmap) {
+    int32_t add_media(const mtmd_bitmap * bitmap, bool minicpmv_video_mode = false) {
         if (!bitmap->is_audio) {
             // handle image
 
@@ -489,7 +489,7 @@ struct mtmd_tokenizer {
 
             // preprocess image
             clip_image_f32_batch batch_f32;
-            bool ok = clip_image_preprocess(ctx->ctx_v, img_u8.get(), &batch_f32);
+            bool ok = clip_image_preprocess(ctx->ctx_v, img_u8.get(), &batch_f32, minicpmv_video_mode=minicpmv_video_mode);
             if (!ok) {
                 LOG_ERR("Unable to preprocess image\n");
                 return 2;
@@ -735,6 +735,15 @@ int32_t mtmd_tokenize(mtmd_context * ctx,
             size_t n_bitmaps) {
     mtmd_tokenizer tokenizer(ctx, text, bitmaps, n_bitmaps);
     return tokenizer.tokenize(output);
+}
+
+int32_t mtmd_tokenize_video(mtmd_context * ctx,
+            mtmd_input_chunks * output,
+            const mtmd_input_text * text,
+            const mtmd_bitmap ** bitmaps,
+            size_t n_bitmaps) {
+    mtmd_tokenizer tokenizer(ctx, text, bitmaps, n_bitmaps);
+    return tokenizer.tokenize(output, /* minicpmv_video_mode */ true);
 }
 
 int32_t mtmd_encode_chunk(mtmd_context * ctx, const mtmd_input_chunk * chunk) {
