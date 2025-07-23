@@ -92,6 +92,10 @@ mtmd_ios_context* mtmd_ios_init(const mtmd_ios_params* params) {
     common_params.sampling.temp = params->temperature;
     common_params.mmproj_use_gpu = params->mmproj_use_gpu;
 
+    common_params.sampling.penalty_repeat = 1.05;
+    common_params.sampling.top_k = 100;
+    common_params.sampling.top_p = 0.8;
+
     ctx->llama_init = common_init_from_params(common_params);
     
     ctx->model = ctx->llama_init.model.get();
