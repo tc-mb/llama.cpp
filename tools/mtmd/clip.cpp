@@ -1704,60 +1704,61 @@ private:
             cur = build_norm(cur, layer.ln_1_w, layer.ln_1_b, norm_t, eps, il);
             cb(cur, "layer_inp_normed", il);
 
-            // self-attention
-            {
-                ggml_tensor * Qcur = ggml_mul_mat(ctx0, layer.q_w, cur);
-                if (layer.q_b) {
-                    Qcur = ggml_add(ctx0, Qcur, layer.q_b);
-                }
+            // // self-attention
+            // {
+            //     ggml_tensor * Qcur = ggml_mul_mat(ctx0, layer.q_w, cur);
+            //     if (layer.q_b) {
+            //         Qcur = ggml_add(ctx0, Qcur, layer.q_b);
+            //     }
 
-                ggml_tensor * Kcur = ggml_mul_mat(ctx0, layer.k_w, cur);
-                if (layer.k_b) {
-                    Kcur = ggml_add(ctx0, Kcur, layer.k_b);
-                }
+            //     ggml_tensor * Kcur = ggml_mul_mat(ctx0, layer.k_w, cur);
+            //     if (layer.k_b) {
+            //         Kcur = ggml_add(ctx0, Kcur, layer.k_b);
+            //     }
 
-                ggml_tensor * Vcur = ggml_mul_mat(ctx0, layer.v_w, cur);
-                if (layer.v_b) {
-                    Vcur = ggml_add(ctx0, Vcur, layer.v_b);
-                }
+            //     ggml_tensor * Vcur = ggml_mul_mat(ctx0, layer.v_w, cur);
+            //     if (layer.v_b) {
+            //         Vcur = ggml_add(ctx0, Vcur, layer.v_b);
+            //     }
 
-                if (layer.q_norm) {
-                    Qcur = build_norm(Qcur, layer.q_norm, NULL, norm_t, eps, il);
-                    cb(Qcur, "Qcur_norm", il);
-                }
+            //     if (layer.q_norm) {
+            //         Qcur = build_norm(Qcur, layer.q_norm, NULL, norm_t, eps, il);
+            //         cb(Qcur, "Qcur_norm", il);
+            //     }
 
-                if (layer.k_norm) {
-                    Kcur = build_norm(Kcur, layer.k_norm, NULL, norm_t, eps, il);
-                    cb(Kcur, "Kcur_norm", il);
-                }
+            //     if (layer.k_norm) {
+            //         Kcur = build_norm(Kcur, layer.k_norm, NULL, norm_t, eps, il);
+            //         cb(Kcur, "Kcur_norm", il);
+            //     }
 
-                Qcur = ggml_reshape_3d(ctx0, Qcur, d_head, n_head, n_pos);
-                Kcur = ggml_reshape_3d(ctx0, Kcur, d_head, n_head, n_pos);
-                Vcur = ggml_reshape_3d(ctx0, Vcur, d_head, n_head, n_pos);
+            //     Qcur = ggml_reshape_3d(ctx0, Qcur, d_head, n_head, n_pos);
+            //     Kcur = ggml_reshape_3d(ctx0, Kcur, d_head, n_head, n_pos);
+            //     Vcur = ggml_reshape_3d(ctx0, Vcur, d_head, n_head, n_pos);
 
-                cb(Qcur, "Qcur", il);
-                cb(Kcur, "Kcur", il);
-                cb(Vcur, "Vcur", il);
+            //     cb(Qcur, "Qcur", il);
+            //     cb(Kcur, "Kcur", il);
+            //     cb(Vcur, "Vcur", il);
 
-                if (add_pos) {
-                    Qcur = add_pos(Qcur, layer);
-                    Kcur = add_pos(Kcur, layer);
-                    cb(Qcur, "Qcur_pos", il);
-                    cb(Kcur, "Kcur_pos", il);
-                }
+            //     if (add_pos) {
+            //         Qcur = add_pos(Qcur, layer);
+            //         Kcur = add_pos(Kcur, layer);
+            //         cb(Qcur, "Qcur_pos", il);
+            //         cb(Kcur, "Kcur_pos", il);
+            //     }
 
-                cur = build_attn(layer.o_w, layer.o_b,
-                    Qcur, Kcur, Vcur, nullptr, kq_scale, il);
-                cb(cur, "attn_out", il);
-            }
+            //     cur = build_attn(layer.o_w, layer.o_b,
+            //         Qcur, Kcur, Vcur, nullptr, kq_scale, il);
+            //     cb(cur, "attn_out", il);
+            // }
 
-            if (layer.ls_1_w) {
-                cur = ggml_mul(ctx0, cur, layer.ls_1_w);
-                cb(cur, "attn_out_scaled", il);
-            }
+            // if (layer.ls_1_w) {
+            //     cur = ggml_mul(ctx0, cur, layer.ls_1_w);
+            //     cb(cur, "attn_out_scaled", il);
+            // }
 
-            // re-add the layer input, e.g., residual
-            cur = ggml_add(ctx0, cur, inpL);
+            // // re-add the layer input, e.g., residual
+            // cur = ggml_add(ctx0, cur, inpL);
+            cur = inpL;
 
             inpL = cur; // inpL = residual, cur = hidden_states
 
@@ -1767,22 +1768,23 @@ private:
             cur = build_norm(cur, layer.ln_2_w, layer.ln_2_b, norm_t, eps, il);
             cb(cur, "ffn_inp_normed", il);
 
-            // ffn
-            cur = build_ffn(cur,
-                layer.ff_up_w, layer.ff_up_b,
-                layer.ff_gate_w, layer.ff_gate_b,
-                layer.ff_down_w, layer.ff_down_b,
-                ffn_t, il);
+            // // ffn
+            // cur = build_ffn(cur,
+            //     layer.ff_up_w, layer.ff_up_b,
+            //     layer.ff_gate_w, layer.ff_gate_b,
+            //     layer.ff_down_w, layer.ff_down_b,
+            //     ffn_t, il);
 
             cb(cur, "ffn_out", il);
 
-            if (layer.ls_2_w) {
-                cur = ggml_mul(ctx0, cur, layer.ls_2_w);
-                cb(cur, "ffn_out_scaled", il);
-            }
+            // if (layer.ls_2_w) {
+            //     cur = ggml_mul(ctx0, cur, layer.ls_2_w);
+            //     cb(cur, "ffn_out_scaled", il);
+            // }
 
-            // residual 2
-            cur = ggml_add(ctx0, inpL, cur);
+            // // residual 2
+            // cur = ggml_add(ctx0, inpL, cur);
+            cur = inpL;
             cb(cur, "layer_out", il);
 
             inpL = cur;
@@ -2476,10 +2478,10 @@ struct clip_model_loader {
         model.layers.resize(hparams.n_layer);
         for (int il = 0; il < hparams.n_layer; ++il) {
             auto & layer = model.layers[il];
-            layer.k_w    = get_tensor(string_format(TN_ATTN_K,      prefix, il, "weight"));
-            layer.q_w    = get_tensor(string_format(TN_ATTN_Q,      prefix, il, "weight"));
-            layer.v_w    = get_tensor(string_format(TN_ATTN_V,      prefix, il, "weight"));
-            layer.o_w    = get_tensor(string_format(TN_ATTN_OUTPUT, prefix, il, "weight"));
+            // layer.k_w    = get_tensor(string_format(TN_ATTN_K,      prefix, il, "weight"));
+            // layer.q_w    = get_tensor(string_format(TN_ATTN_Q,      prefix, il, "weight"));
+            // layer.v_w    = get_tensor(string_format(TN_ATTN_V,      prefix, il, "weight"));
+            // layer.o_w    = get_tensor(string_format(TN_ATTN_OUTPUT, prefix, il, "weight"));
             layer.k_norm = get_tensor(string_format(TN_ATTN_K_NORM, prefix, il, "weight"), false);
             layer.q_norm = get_tensor(string_format(TN_ATTN_Q_NORM, prefix, il, "weight"), false);
             layer.ln_1_w = get_tensor(string_format(TN_LN_1,        prefix, il, "weight"), false);
@@ -2495,11 +2497,11 @@ struct clip_model_loader {
             layer.ln_2_b = get_tensor(string_format(TN_LN_2,        prefix, il, "bias"), false);
 
             // ffn
-            layer.ff_up_w   = get_tensor(string_format(TN_FFN_UP,   prefix, il, "weight"));
+            // layer.ff_up_w   = get_tensor(string_format(TN_FFN_UP,   prefix, il, "weight"));
             layer.ff_up_b   = get_tensor(string_format(TN_FFN_UP,   prefix, il, "bias"),   false);
             layer.ff_gate_w = get_tensor(string_format(TN_FFN_GATE, prefix, il, "weight"), false);
             layer.ff_gate_b = get_tensor(string_format(TN_FFN_GATE, prefix, il, "bias"),   false);
-            layer.ff_down_w = get_tensor(string_format(TN_FFN_DOWN, prefix, il, "weight"));
+            // layer.ff_down_w = get_tensor(string_format(TN_FFN_DOWN, prefix, il, "weight"));
             layer.ff_down_b = get_tensor(string_format(TN_FFN_DOWN, prefix, il, "bias"),   false);
 
             // some models already exported with legacy (incorrect) naming which is quite messy, let's fix it here
