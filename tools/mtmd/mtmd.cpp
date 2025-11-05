@@ -856,6 +856,12 @@ int mtmd_get_audio_bitrate(mtmd_context * ctx) {
     return 16000; // 16kHz
 }
 
+struct clip_ctx * mtmd_get_clip_ctx(mtmd_context * ctx) {
+    if (ctx == nullptr) {
+        return nullptr;
+    }
+    return ctx->ctx_v; 
+}
 //
 // public API functions
 //

@@ -8,6 +8,7 @@
 #include <string>
 #include <map>
 #include <sstream>
+#include <fstream>
 #include <vector>
 #include <memory>
 
@@ -258,17 +259,35 @@ static void clip_log_internal(enum ggml_log_level level, const char * format, ..
     va_end(args);
 }
 
+#ifndef LOG_TMPL
 #define LOG_TMPL(level, ...) \
     do { \
         if ((level) >= g_logger_state.verbosity_thold) { \
             clip_log_internal((level), __VA_ARGS__); \
         } \
     } while (0)
+#endif
+
+#ifndef LOG_INF
 #define LOG_INF(...) LOG_TMPL(GGML_LOG_LEVEL_INFO,  __VA_ARGS__)
+#endif
+
+#ifndef LOG_WRN
 #define LOG_WRN(...) LOG_TMPL(GGML_LOG_LEVEL_WARN,  __VA_ARGS__)
+#endif
+
+#ifndef LOG_ERR
 #define LOG_ERR(...) LOG_TMPL(GGML_LOG_LEVEL_ERROR, __VA_ARGS__)
+#endif
+
+#ifndef LOG_DBG
 #define LOG_DBG(...) LOG_TMPL(GGML_LOG_LEVEL_DEBUG, __VA_ARGS__)
+#endif
+
+#ifndef LOG_CNT
 #define LOG_CNT(...) LOG_TMPL(GGML_LOG_LEVEL_CONT,  __VA_ARGS__)
+#endif
+
 
 //
 // cpp wrappers
@@ -321,10 +340,9 @@ struct clip_image_f32_batch {
 };
 
 //
-// common utils
+// tmpl utils
 //
-
-static std::string string_format(const char * fmt, ...) {
+inline std::string string_format(const char * fmt, ...) {
     va_list ap;
     va_list ap2;
     va_start(ap, fmt);
@@ -336,10 +354,29 @@ static std::string string_format(const char * fmt, ...) {
     GGML_ASSERT(size2 == size);
     va_end(ap2);
     va_end(ap);
-    return std::string(buf.data(), buf.size());
+    return std::string(buf.data(), size);
 }
 
-static void string_replace_all(std::string & s, const std::string & search, const std::string & replace) {
+static std::string read_file(const std::string & fname) {
+    std::ifstream file(fname);
+    if (!file) {
+        throw std::runtime_error(string_format("error: failed to open file '%s'\n", fname.c_str()));
+    }
+    std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    file.close();
+    return content;
+}
+
+static std::string get_tmpl(projector_type model){
+    if(model == PROJECTOR_TYPE_MINICPMV) return read_file("../../models/templates/modelbest-minicpm-v4.5.jinja");
+    return "";
+}
+//
+// common utils
+//
+
+
+inline void string_replace_all(std::string & s, const std::string & search, const std::string & replace) {
     if (search.empty()) {
         return;
     }

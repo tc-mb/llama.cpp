@@ -436,6 +436,7 @@ struct common_params {
     bool enable_chat_template = true;
     common_reasoning_format reasoning_format = COMMON_REASONING_FORMAT_DEEPSEEK;
     int reasoning_budget = -1;
+    bool enable_thinking = false;
     bool prefill_assistant = true;                                                                          // if true, any trailing assistant message will be prefilled into the response
 
     std::vector<std::string> api_keys;

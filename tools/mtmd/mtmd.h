@@ -216,6 +216,7 @@ MTMD_API float * mtmd_get_output_embd(mtmd_context * ctx);
 // test function, to be used in test-mtmd-c-api.c
 MTMD_API mtmd_input_chunks * mtmd_test_create_input_chunks(void);
 
+MTMD_API struct clip_ctx * mtmd_get_clip_ctx(mtmd_context * ctx);
 #ifdef __cplusplus
 } // extern "C"
 #endif
@@ -291,6 +292,10 @@ struct input_chunks {
         return mtmd_input_chunks_get(ptr.get(), idx);
     }
 };
+
+inline clip_ctx * mtmd_get_clip_ctx(mtmd_context * ctx) {
+    return ::mtmd_get_clip_ctx(ctx);
+}
 
 } // namespace mtmd
 

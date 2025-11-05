@@ -8,6 +8,7 @@
 #include "chat.h"
 #include "mtmd.h"
 #include "mtmd-helper.h"
+#include "clip-impl.h"
 
 #include <vector>
 #include <limits.h>
@@ -80,6 +81,7 @@ struct mtmd_cli_context {
     common_chat_templates_ptr tmpls;
     std::vector<common_chat_msg> chat_history;
     bool use_jinja = false;
+    bool enable_thinking = false;
     // TODO: support for --system-prompt with /clear command
 
     // support for legacy templates (models not having EOT token)
@@ -111,6 +113,7 @@ struct mtmd_cli_context {
 
         tmpls = common_chat_templates_init(model, params.chat_template);
         use_jinja = params.use_jinja;
+        enable_thinking = params.enable_thinking;
         chat_history.clear();
         LOG_INF("%s: chat template example:\n%s\n", __func__, common_chat_format_example(tmpls.get(), params.use_jinja, params.default_template_kwargs).c_str());
 
@@ -211,9 +214,19 @@ static int generate_response(mtmd_cli_context & ctx, int n_predict) {
 static std::string chat_add_and_format(mtmd_cli_context & ctx, common_chat_msg & new_msg) {
     LOG_DBG("chat_add_and_format: new_msg.role='%s', new_msg.content='%s'\n",
         new_msg.role.c_str(), new_msg.content.c_str());
-    auto formatted = common_chat_format_single(ctx.tmpls.get(), ctx.chat_history,
+
+    auto clip_ctx = mtmd::mtmd_get_clip_ctx(ctx.ctx_vision.get());
+    if (clip_is_minicpmv(clip_ctx)) {
+        ctx.tmpls = common_chat_templates_init(ctx.llama_init.model.get(),
+                                        get_tmpl(PROJECTOR_TYPE_MINICPMV));
+    }
+    
+    auto tmpl = ctx.tmpls.get();
+    auto formatted = common_chat_format_single(tmpl, ctx.chat_history,
         new_msg, new_msg.role == "user",
-        ctx.use_jinja);
+        ctx.use_jinja, ctx.enable_thinking);
+    
+
     ctx.chat_history.push_back(new_msg);
     return formatted;
 }
@@ -225,6 +238,8 @@ static int eval_message(mtmd_cli_context & ctx, common_chat_msg & msg) {
 
     mtmd_input_text text;
     text.text          = formatted_chat.c_str();
+
+    std::cout << "there" << text.text << std::endl;
     text.add_special   = add_bos;
     text.parse_special = true;
 

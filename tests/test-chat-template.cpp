@@ -378,7 +378,7 @@ int main(void) {
 
     auto fmt_sys = [&](std::string tmpl_str) {
         auto tmpls = common_chat_templates_init(/* model= */ nullptr, tmpl_str);
-        auto output = common_chat_format_single(tmpls.get(), chat2, sys_msg, false, /* use_jinja= */ false);
+        auto output = common_chat_format_single(tmpls.get(), chat2, sys_msg, false, /* use_jinja= */ false, true);
         printf("fmt_sys(%s) : %s\n", tmpl_str.c_str(), output.c_str());
         printf("-------------------------\n");
         return output;
@@ -405,7 +405,7 @@ int main(void) {
 
     auto fmt_single = [&](const std::string & tmpl_str) {
         auto tmpls = common_chat_templates_init(/* model= */ nullptr, tmpl_str.c_str());
-        auto output = common_chat_format_single(tmpls.get(), chat2, new_msg, true, /* use_jinja= */ false);
+        auto output = common_chat_format_single(tmpls.get(), chat2, new_msg, true, /* use_jinja= */ false, true);
         printf("fmt_single(%s) : %s\n", tmpl_str.c_str(), output.c_str());
         printf("-------------------------\n");
         return output;

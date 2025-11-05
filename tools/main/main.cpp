@@ -269,7 +269,7 @@ int main(int argc, char ** argv) {
         common_chat_msg new_msg;
         new_msg.role = role;
         new_msg.content = content;
-        auto formatted = common_chat_format_single(chat_templates.get(), chat_msgs, new_msg, role == "user", g_params->use_jinja);
+        auto formatted = common_chat_format_single(chat_templates.get(), chat_msgs, new_msg, role == "user", g_params->use_jinja,true);
         chat_msgs.push_back(new_msg);
         LOG_DBG("formatted: '%s'\n", formatted.c_str());
         return formatted;

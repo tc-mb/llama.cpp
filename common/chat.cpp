@@ -462,12 +462,17 @@ std::string common_chat_format_single(
         const std::vector<common_chat_msg> & past_msg,
         const common_chat_msg & new_msg,
         bool add_ass,
-        bool use_jinja) {
+        bool use_jinja,
+        const std::optional<bool> &enable_thinking) {
 
     common_chat_templates_inputs inputs;
     inputs.use_jinja = use_jinja;
     inputs.add_bos = tmpls->add_bos;
     inputs.add_eos = tmpls->add_eos;
+
+    if (enable_thinking.has_value()) {
+        inputs.enable_thinking = enable_thinking.value();  
+    }
 
     std::string fmt_past_msg;
     if (!past_msg.empty()) {
@@ -643,6 +648,7 @@ const char * common_chat_format_name(common_chat_format format) {
         case COMMON_CHAT_FORMAT_NEMOTRON_V2: return "Nemotron V2";
         case COMMON_CHAT_FORMAT_APERTUS: return "Apertus";
         case COMMON_CHAT_FORMAT_LFM2_WITH_JSON_TOOLS: return "LFM2 with JSON tools";
+        case COMMON_CHAT_FORMAT_MINICPM: return "Minicpm V4_5";
         default:
             throw std::runtime_error("Unknown chat format");
     }
@@ -1662,6 +1668,110 @@ static common_chat_params common_chat_params_init_deepseek_r1(const common_chat_
     return data;
 }
 
+static common_chat_params common_chat_params_init_minicpm(
+    const common_chat_template & tmpl,
+    const struct templates_params & inputs
+) {
+    common_chat_params data;
+
+    // Thinking flag
+    bool enable_thinking = inputs.enable_thinking;
+    bool add_generation_prompt = inputs.add_generation_prompt;
+
+    // Extra context for apply()
+    json extra_context = {
+        {"enable_thinking", enable_thinking},
+        {"add_generation_prompt", add_generation_prompt}
+    };
+    extra_context.update(inputs.extra_context);
+
+    // Generate the base prompt
+    data.prompt = apply(
+        tmpl,
+        inputs,
+        /* messages_override = */ std::nullopt,
+        /* tools_override = */ std::nullopt,
+        extra_context
+    );
+
+    // Format type
+    data.format = COMMON_CHAT_FORMAT_MINICPM;
+
+    // Handle open <think> tags at the end
+    if (string_ends_with(data.prompt, "<think>\n")) {
+        if (!enable_thinking) {
+            data.prompt += "</think>";
+        } else {
+            data.thinking_forced_open = true;
+        }
+    }
+
+    // Tool handling
+    if (!inputs.tools.is_null() && !inputs.tools.empty()) {
+        data.grammar_lazy = inputs.tool_choice != COMMON_CHAT_TOOL_CHOICE_REQUIRED;
+
+        data.grammar = build_grammar([&](const common_grammar_builder & builder) {
+            std::vector<std::string> tool_rules;
+            std::vector<std::string> tool_call_alts;
+            std::vector<std::string> escaped_names;
+
+            foreach_function(inputs.tools, [&](const json & tool) {
+                const auto & function = tool.at("function");
+                std::string name = function.at("name");
+                auto parameters = function.at("parameters");
+
+                builder.resolve_refs(parameters);
+
+                // JSON schema style rule
+                tool_rules.push_back(builder.add_schema(name + "-call", {
+                    {"type", "object"},
+                    {"properties", json {
+                        {"name", json {{"const", name}}},
+                        {"arguments", parameters}
+                    }},
+                    {"required", json::array({"name", "arguments"})}
+                }));
+
+                // Tool call pattern
+                tool_call_alts.push_back(builder.add_rule(
+                    name + "-tool_call",
+                    "\"<tool_call>\" space " + builder.add_schema(name + "-args", parameters) + " \"</tool_call>\""
+                ));
+
+                // Grammar triggers
+                data.grammar_triggers.push_back({
+                    COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN,
+                    "<tool_call>.*" + regex_escape(name)
+                });
+
+                escaped_names.push_back(regex_escape(name));
+            });
+
+            auto any_tool_call = builder.add_rule("any_tool_call", "( " + string_join(tool_rules, " | ") + " ) space");
+            auto wrappable_tool_call = builder.add_rule("wrappable_tool_call", "( " + string_join(tool_call_alts, " | ") + " ) space");
+
+            builder.add_rule("root",
+                std::string(data.thinking_forced_open ? "( \"</think>\" space )? " : "") +
+                (inputs.parallel_tool_calls ? "(" + wrappable_tool_call + ")+" : wrappable_tool_call)
+            );
+
+            data.preserved_tokens = {
+                "<|im_start|>user",
+                "<|im_start|>assistant",
+                "<|im_start|>system",
+                "<|im_end|>",
+                "<think>",
+                "</think>",
+                "<tool_call>",
+                "</tool_call>"
+            };
+        });
+    }
+
+    return data;
+}
+
+
 static common_chat_params common_chat_params_init_deepseek_v3_1(const common_chat_template & tmpl, const struct templates_params & inputs) {
     common_chat_params data;
 
@@ -1745,6 +1855,90 @@ static void common_chat_parse_deepseek_r1(common_chat_msg_parser & builder) {
         function_regex,
         close_regex,
         tool_calls_end);
+}
+
+static void common_chat_parse_minicpmv4_5(common_chat_msg_parser & builder) {
+    // 尝试解析 <think> 标签
+    builder.try_parse_reasoning("<think>", "</think>");
+
+    // 如果语法不需要解析工具调用，则直接把剩余内容加入
+    if (!builder.syntax().parse_tool_calls) {
+        builder.add_content(builder.consume_rest());
+        return;
+    }
+
+    // 匹配 MiniCPM 可能出现的工具调用起始标签
+    static const common_regex open_regex(
+        "(?:"
+            "(```(?:json|xml)?\\n\\s*)?"   // 匹配代码块开始（可选）
+            "("                            // 匹配 open_tag
+                "<tool_call>"
+                "|<function_call>"
+                "|<tools>"
+                "|<tool>"
+                "|<response>"
+                "|<json>"
+                "|<xml>"
+            ")?"
+            "(\\s*\\{\\s*\"name\")"        // 匹配工具调用 JSON 的开始
+        ")"
+        "|<function=([^>]+)>"             // 匹配 function=xxx
+        "|<function name=\"([^\"]+)\">"   // 匹配 function name="xxx"
+    );
+
+    while (auto res = builder.try_find_regex(open_regex)) {
+        const auto & block_start = res->groups[1];
+        std::string block_end = block_start.empty() ? "" : "```";
+
+        const auto & open_tag = res->groups[2];
+        std::string close_tag;
+
+        if (!res->groups[3].empty()) {
+            // JSON 工具调用
+            builder.move_to(res->groups[3].begin);
+            close_tag = open_tag.empty() ? "" : "</" + builder.str(open_tag).substr(1);
+
+            if (auto tool_call = builder.try_consume_json_with_dumped_args({{"arguments"}})) {
+                if (!builder.add_tool_call(tool_call->value) || tool_call->is_partial) {
+                    throw common_chat_msg_partial_exception("incomplete tool call");
+                }
+                builder.consume_spaces();
+                builder.consume_literal(close_tag);
+                builder.consume_spaces();
+                if (!block_end.empty()) {
+                    builder.consume_literal(block_end);
+                    builder.consume_spaces();
+                }
+            } else {
+                throw common_chat_msg_partial_exception("failed to parse tool call");
+            }
+
+        } else {
+            // 解析 <function> 标签
+            auto function_name = builder.str(res->groups[4]);
+            if (function_name.empty()) {
+                function_name = builder.str(res->groups[5]);
+            }
+            GGML_ASSERT(!function_name.empty());
+
+            close_tag = "</function>";
+
+            if (auto arguments = builder.try_consume_json_with_dumped_args({{}})) {
+                if (!builder.add_tool_call(function_name, "", arguments->value) || arguments->is_partial) {
+                    throw common_chat_msg_partial_exception("incomplete tool call");
+                }
+                builder.consume_spaces();
+                builder.consume_literal(close_tag);
+                builder.consume_spaces();
+                if (!block_end.empty()) {
+                    builder.consume_literal(block_end);
+                    builder.consume_spaces();
+                }
+            }
+        }
+    }
+
+    builder.add_content(builder.consume_rest());
 }
 
 static void common_chat_parse_deepseek_v3_1_content(common_chat_msg_parser & builder) {
@@ -2258,7 +2452,7 @@ static void common_chat_parse_functionary_v3_1_llama_3_1(common_chat_msg_parser 
         return;
     }
 }
-
+//fuck
 static common_chat_params common_chat_params_init_hermes_2_pro(const common_chat_template & tmpl, const struct templates_params & inputs) {
     common_chat_params data;
 
@@ -2880,7 +3074,7 @@ static common_chat_params common_chat_templates_apply_jinja(
     params.now = inputs.now;
     params.add_bos = tmpls->add_bos;
     params.add_eos = tmpls->add_eos;
-
+    std::cout << "aaaaaaaaaaaaaaaaa" << params.add_generation_prompt << params.enable_thinking << std::endl;
     params.extra_context = json::object();
     for (auto el : inputs.chat_template_kwargs) {
         params.extra_context[el.first] = json::parse(el.second);
@@ -2910,6 +3104,18 @@ static common_chat_params common_chat_templates_apply_jinja(
     if (src.find("message['prefix'] is defined and message['prefix'] and thinking") != std::string::npos &&
         params.json_schema.is_null()) {
         return common_chat_params_init_deepseek_v3_1(tmpl, params);
+    }
+
+    if (src.find(R"({%- if add_generation_prompt %}
+    {{- '<|im_start|>assistant\n' }}
+    {%- if enable_thinking is defined and enable_thinking is false %}
+        {{- '<think>\n\n</think>\n\n' }}
+    {%- endif %}
+    {%- if enable_thinking is defined and enable_thinking is true %}
+        {{- '<think>\n' }}
+    {%- endif %}
+{%- endif %})") != std::string::npos) {
+        return common_chat_params_init_minicpm(tmpl, params);
     }
 
     // DeepSeek R1: use handler in all cases except json schema (thinking / tools).
@@ -3102,6 +3308,9 @@ static void common_chat_parse(common_chat_msg_parser & builder) {
             break;
         case COMMON_CHAT_FORMAT_DEEPSEEK_R1:
             common_chat_parse_deepseek_r1(builder);
+            break;
+        case COMMON_CHAT_FORMAT_MINICPM:
+            common_chat_parse_minicpmv4_5(builder);
             break;
         case COMMON_CHAT_FORMAT_DEEPSEEK_V3_1:
             common_chat_parse_deepseek_v3_1(builder);

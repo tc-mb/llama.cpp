@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <optional>
 
 struct common_chat_templates;
 
@@ -117,6 +118,7 @@ enum common_chat_format {
     COMMON_CHAT_FORMAT_NEMOTRON_V2,
     COMMON_CHAT_FORMAT_APERTUS,
     COMMON_CHAT_FORMAT_LFM2_WITH_JSON_TOOLS,
+    COMMON_CHAT_FORMAT_MINICPM,
 
     COMMON_CHAT_FORMAT_COUNT, // Not a format, just the # formats
 };
@@ -188,7 +190,8 @@ std::string common_chat_format_single(
         const std::vector<common_chat_msg> & past_msg,
         const common_chat_msg & new_msg,
         bool add_ass,
-        bool use_jinja);
+        bool use_jinja,
+        const std::optional<bool> &enable_thinking);
 
 // Returns an example of formatted chat
 std::string common_chat_format_example(
