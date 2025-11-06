@@ -1676,12 +1676,10 @@ static common_chat_params common_chat_params_init_minicpm(
 
     // Thinking flag
     bool enable_thinking = inputs.enable_thinking;
-    bool add_generation_prompt = inputs.add_generation_prompt;
 
     // Extra context for apply()
     json extra_context = {
-        {"enable_thinking", enable_thinking},
-        {"add_generation_prompt", add_generation_prompt}
+        {"enable_thinking", enable_thinking}
     };
     extra_context.update(inputs.extra_context);
 
@@ -1693,7 +1691,6 @@ static common_chat_params common_chat_params_init_minicpm(
         /* tools_override = */ std::nullopt,
         extra_context
     );
-
     // Format type
     data.format = COMMON_CHAT_FORMAT_MINICPM;
 
@@ -1858,20 +1855,17 @@ static void common_chat_parse_deepseek_r1(common_chat_msg_parser & builder) {
 }
 
 static void common_chat_parse_minicpmv4_5(common_chat_msg_parser & builder) {
-    // 尝试解析 <think> 标签
     builder.try_parse_reasoning("<think>", "</think>");
 
-    // 如果语法不需要解析工具调用，则直接把剩余内容加入
     if (!builder.syntax().parse_tool_calls) {
         builder.add_content(builder.consume_rest());
         return;
     }
 
-    // 匹配 MiniCPM 可能出现的工具调用起始标签
     static const common_regex open_regex(
         "(?:"
-            "(```(?:json|xml)?\\n\\s*)?"   // 匹配代码块开始（可选）
-            "("                            // 匹配 open_tag
+            "(```(?:json|xml)?\\n\\s*)?"   
+            "("                          
                 "<tool_call>"
                 "|<function_call>"
                 "|<tools>"
@@ -1880,10 +1874,10 @@ static void common_chat_parse_minicpmv4_5(common_chat_msg_parser & builder) {
                 "|<json>"
                 "|<xml>"
             ")?"
-            "(\\s*\\{\\s*\"name\")"        // 匹配工具调用 JSON 的开始
+            "(\\s*\\{\\s*\"name\")"        
         ")"
-        "|<function=([^>]+)>"             // 匹配 function=xxx
-        "|<function name=\"([^\"]+)\">"   // 匹配 function name="xxx"
+        "|<function=([^>]+)>"          
+        "|<function name=\"([^\"]+)\">"  
     );
 
     while (auto res = builder.try_find_regex(open_regex)) {
@@ -1894,7 +1888,6 @@ static void common_chat_parse_minicpmv4_5(common_chat_msg_parser & builder) {
         std::string close_tag;
 
         if (!res->groups[3].empty()) {
-            // JSON 工具调用
             builder.move_to(res->groups[3].begin);
             close_tag = open_tag.empty() ? "" : "</" + builder.str(open_tag).substr(1);
 
@@ -1914,7 +1907,6 @@ static void common_chat_parse_minicpmv4_5(common_chat_msg_parser & builder) {
             }
 
         } else {
-            // 解析 <function> 标签
             auto function_name = builder.str(res->groups[4]);
             if (function_name.empty()) {
                 function_name = builder.str(res->groups[5]);
@@ -2452,7 +2444,7 @@ static void common_chat_parse_functionary_v3_1_llama_3_1(common_chat_msg_parser 
         return;
     }
 }
-//fuck
+
 static common_chat_params common_chat_params_init_hermes_2_pro(const common_chat_template & tmpl, const struct templates_params & inputs) {
     common_chat_params data;
 
