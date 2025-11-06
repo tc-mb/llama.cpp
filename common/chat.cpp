@@ -3066,7 +3066,6 @@ static common_chat_params common_chat_templates_apply_jinja(
     params.now = inputs.now;
     params.add_bos = tmpls->add_bos;
     params.add_eos = tmpls->add_eos;
-    std::cout << "aaaaaaaaaaaaaaaaa" << params.add_generation_prompt << params.enable_thinking << std::endl;
     params.extra_context = json::object();
     for (auto el : inputs.chat_template_kwargs) {
         params.extra_context[el.first] = json::parse(el.second);
