@@ -28,8 +28,11 @@ cmake --build build --config Release
 Convert PyTorch model to gguf files (You can also download the converted [gguf](https://huggingface.co/openbmb/MiniCPM-o-4-gguf) by us)
 
 ```bash
+# convert vision encoder and resampler to mmproj GGUF
+python ./convert_hf_to_gguf.py ../MiniCPM-o-4 --mmproj --outtype f16 --outfile ../MiniCPM-o-4/mmproj-model-f16.gguf
+
+# extract LLM from the combined model, then convert to GGUF
 python ./tools/mtmd/legacy-models/minicpmv-surgery.py -m ../MiniCPM-o-4
-python ./tools/mtmd/legacy-models/minicpmv-convert-image-encoder-to-gguf.py -m ../MiniCPM-o-4 --minicpmv-projector ../MiniCPM-o-4/minicpmv.projector --output-dir ../MiniCPM-o-4/ --minicpmv_version 6
 python ./convert_hf_to_gguf.py ../MiniCPM-o-4/model
 
 # quantize int4 version

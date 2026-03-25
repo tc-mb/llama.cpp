@@ -3710,6 +3710,120 @@ class MiniCPM3Model(TextModel):
         )
 
 
+@ModelBase.register("MiniCPMV", "MiniCPMO")
+class MiniCPMVModel(MmprojModel):
+    # The config.json "version" field is the *product* version (e.g. 2.6, 4.0),
+    # while the C++ runtime expects an internal integer (e.g. 3, 5).
+    # This table maps (product_version_str, is_omni) → C++ minicpmv_version.
+    _VERSION_MAP: dict[tuple[str, bool], int] = {
+        ("2.5", False): 2,       # MiniCPM-V-2.5
+        ("2.6", False): 3,       # MiniCPM-V-2.6
+        ("2.6", True):  4,       # MiniCPM-o-2.6
+        ("4.0", False): 5,       # MiniCPM-V-4.0
+        ("4.0", True):  6,       # MiniCPM-o-4.0
+        ("4.5", True):  100045,  # MiniCPM-o-4.5
+    }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.minicpmv_version = self._resolve_version()
+        if "image_mean" not in self.preprocessor_config:
+            self.preprocessor_config["image_mean"] = [0.5, 0.5, 0.5]
+        if "image_std" not in self.preprocessor_config:
+            self.preprocessor_config["image_std"] = [0.5, 0.5, 0.5]
+
+    def _resolve_version(self) -> int:
+        raw = self.global_config.get("version")
+        if raw is None:
+            # MiniCPM-V-2.5 or earlier: no version field but has vision_config
+            return 2
+        is_omni = self.global_config.get("model_type") == "minicpmo"
+        ver_str = str(raw).strip()
+        key = (ver_str, is_omni)
+        if key in self._VERSION_MAP:
+            return self._VERSION_MAP[key]
+        supported = ", ".join(
+            "{} ({})".format(v, "omni" if o else "vision")
+            for (v, o) in self._VERSION_MAP
+        )
+        raise ValueError(
+            f"Unsupported MiniCPM-V version: {ver_str!r} (is_omni={is_omni}). "
+            f"Supported: {supported}"
+        )
+
+    def set_gguf_parameters(self):
+        super().set_gguf_parameters()
+        self.gguf_writer.add_clip_projector_type(gguf.VisionProjectorType.MINICPMV)
+        self.gguf_writer.add_vision_attention_layernorm_eps(
+            self.find_vparam(["layer_norm_eps"], optional=True) or 1e-6
+        )
+        self.gguf_writer.add_vision_use_gelu(True)
+        self.gguf_writer.add_int32("clip.minicpmv_version", self.minicpmv_version)
+        query_num = self.global_config.get("query_num", 96)
+        self.gguf_writer.add_uint32("clip.minicpmv_query_num", query_num)
+        logger.info(f"minicpmv_version = {self.minicpmv_version}, query_num = {query_num}")
+
+    def generate_extra_tensors(self) -> Iterable[tuple[str, Tensor]]:
+        emb_dim = self.n_embd_text
+        pos_embed = self._get_2d_sincos_pos_embed(emb_dim, (70, 70))
+        yield ("resampler.pos_embed_k", torch.from_numpy(pos_embed).float())
+
+    def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
+        if name.startswith("llm."):
+            return
+
+        if name.startswith("resampler."):
+            if ".attn.in_proj_" in name:
+                c3 = data_torch.shape[0]
+                assert c3 % 3 == 0
+                c = c3 // 3
+                suffix = "weight" if "weight" in name else "bias"
+                yield from super().modify_tensors(data_torch[:c], f"resampler.attn.in_proj_q.{suffix}", bid)
+                yield from super().modify_tensors(data_torch[c:c * 2], f"resampler.attn.in_proj_k.{suffix}", bid)
+                yield from super().modify_tensors(data_torch[c * 2:], f"resampler.attn.in_proj_v.{suffix}", bid)
+                return
+
+            if name == "resampler.proj":
+                data_torch = data_torch.transpose(-1, -2).contiguous()
+                yield from super().modify_tensors(data_torch, "resampler.proj.weight", bid)
+                return
+
+            if name == "resampler.pos_embed":
+                return
+
+            yield from super().modify_tensors(data_torch, name, bid)
+            return
+
+        if name.startswith("vpm."):
+            yield from super().modify_tensors(data_torch, name, bid)
+            return
+
+        return
+
+    def tensor_force_quant(self, name, new_name, bid, n_dims):
+        if "resampler." in new_name and n_dims <= 1:
+            return gguf.GGMLQuantizationType.F32
+        return super().tensor_force_quant(name, new_name, bid, n_dims)
+
+    @staticmethod
+    def _get_2d_sincos_pos_embed(embed_dim: int, grid_size: tuple[int, int]) -> np.ndarray:
+        grid_h = np.arange(grid_size[0], dtype=np.float32)
+        grid_w = np.arange(grid_size[1], dtype=np.float32)
+        grid = np.meshgrid(grid_w, grid_h)
+        grid = np.stack(grid, axis=0).reshape([2, 1, grid_size[0], grid_size[1]])
+
+        def get_1d_sincos(dim: int, pos: np.ndarray) -> np.ndarray:
+            omega = np.arange(dim // 2, dtype=np.float32)
+            omega /= dim / 2.0
+            omega = 1.0 / 10000**omega
+            out = np.einsum("m,d->md", pos.reshape(-1), omega)
+            return np.concatenate([np.sin(out), np.cos(out)], axis=1)
+
+        emb_h = get_1d_sincos(embed_dim // 2, grid[0])
+        emb_w = get_1d_sincos(embed_dim // 2, grid[1])
+        return np.concatenate([emb_h, emb_w], axis=1)
+
+
 @ModelBase.register("QWenLMHeadModel")
 class QwenModel(TextModel):
     model_arch = gguf.MODEL_ARCH.QWEN
