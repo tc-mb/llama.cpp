@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <unordered_map>
 #include <vector>
 
 // represents raw image data, layout is RGBRGBRGB...
@@ -125,6 +126,9 @@ struct mtmd_context {
     struct clip_ctx * ctx_a; // audio
     const struct llama_model * text_model;
     std::vector<float> image_embd_v; // image embedding vector
+
+    // batch vision encoding cache: maps image_tokens pointer -> pre-computed embeddings
+    std::unordered_map<const mtmd_image_tokens *, std::vector<float>> encode_cache;
 
     bool print_timings;
     int n_threads;
@@ -937,16 +941,22 @@ int32_t mtmd_encode(mtmd_context * ctx, const mtmd_image_tokens * image_tokens) 
         LOG_ERR("%s: this API does not support non-vision input, please use mtmd_encode_chunk instead\n", __func__);
         return 1;
     }
+
+    // check batch pre-encode cache first
+    auto cache_it = ctx->encode_cache.find(image_tokens);
+    if (cache_it != ctx->encode_cache.end()) {
+        ctx->image_embd_v = cache_it->second;
+        return 0;
+    }
+
     auto proj_type = clip_get_projector_type(ctx_clip);
     int n_mmproj_embd = clip_n_mmproj_embd(ctx_clip);
     ctx->image_embd_v.resize(image_tokens->n_tokens() * n_mmproj_embd);
     bool ok = false;
 
     if (clip_is_llava(ctx_clip)
-        || clip_is_minicpmv(ctx_clip)
         || clip_is_glm(ctx_clip)
         || proj_type == PROJECTOR_TYPE_INTERNVL) {
-        // TODO @ngxson : llava does not support batched encoding ; this should be fixed inside clip_image_batch_encode()
         const auto & entries = image_tokens->batch_f32.entries;
         for (size_t i = 0; i < entries.size(); i++) {
             int n_tokens_per_image = clip_n_output_tokens(ctx_clip, entries[i].get());
@@ -955,6 +965,25 @@ int32_t mtmd_encode(mtmd_context * ctx, const mtmd_image_tokens * image_tokens) 
                 ctx->n_threads,
                 entries[i].get(),
                 ctx->image_embd_v.data() + i*n_mmproj_embd*n_tokens_per_image);
+        }
+    } else if (clip_is_minicpmv(ctx_clip)) {
+        // MiniCPM-V: use batch encode if multiple same-size entries
+        const auto & entries = image_tokens->batch_f32.entries;
+        if (entries.size() > 1) {
+            ok = clip_image_batch_encode(
+                ctx_clip,
+                ctx->n_threads,
+                &image_tokens->batch_f32,
+                ctx->image_embd_v.data());
+        } else {
+            for (size_t i = 0; i < entries.size(); i++) {
+                int n_tokens_per_image = clip_n_output_tokens(ctx_clip, entries[i].get());
+                ok = clip_image_encode(
+                    ctx_clip,
+                    ctx->n_threads,
+                    entries[i].get(),
+                    ctx->image_embd_v.data() + i*n_mmproj_embd*n_tokens_per_image);
+            }
         }
     } else {
         ok = clip_image_batch_encode(
@@ -1299,6 +1328,90 @@ void mtmd_debug_encode_audio(mtmd_context * ctx, const std::vector<float> & inpu
     }
     LOG_INF("%s: created input audio with nx=%d, ny=%d\n", __func__, inp_audio.nx, inp_audio.ny);
     mtmd_debug_encode_impl(ctx, ctx->ctx_a, inp_audio);
+}
+
+int32_t mtmd_batch_pre_encode(mtmd_context * ctx, const mtmd_input_chunks * chunks) {
+    if (!ctx->ctx_v || !clip_is_minicpmv(ctx->ctx_v)) {
+        return 0; // batch pre-encode only supported for MiniCPM-V
+    }
+
+    ctx->encode_cache.clear();
+
+    struct img_group_key {
+        int nx, ny;
+        std::string id;
+        bool operator==(const img_group_key & o) const { return nx == o.nx && ny == o.ny && id == o.id; }
+    };
+    struct img_group_key_hash {
+        size_t operator()(const img_group_key & k) const {
+            return std::hash<int>()(k.nx) ^ (std::hash<int>()(k.ny) << 16) ^ std::hash<std::string>()(k.id);
+        }
+    };
+
+    // group image chunks by (id, dimensions) for batch encoding
+    std::unordered_map<img_group_key, std::vector<const mtmd_image_tokens *>, img_group_key_hash> groups;
+
+    size_t n_chunks = mtmd_input_chunks_size(chunks);
+    for (size_t i = 0; i < n_chunks; i++) {
+        auto chunk = mtmd_input_chunks_get(chunks, i);
+        if (mtmd_input_chunk_get_type(chunk) != MTMD_INPUT_CHUNK_TYPE_IMAGE) {
+            continue;
+        }
+        auto image_tokens = mtmd_input_chunk_get_tokens_image(chunk);
+        if (!image_tokens || image_tokens->batch_f32.entries.size() != 1) {
+            continue;
+        }
+        auto & entry = image_tokens->batch_f32.entries[0];
+        img_group_key key{entry->nx, entry->ny, image_tokens->id};
+        groups[key].push_back(image_tokens);
+    }
+
+    int n_mmproj_embd = clip_n_mmproj_embd(ctx->ctx_v);
+
+    for (auto & [key, group] : groups) {
+        if (group.size() <= 1) {
+            continue; // no benefit from batching a single image
+        }
+
+        // build a batched clip_image_f32_batch from all entries in this group
+        clip_image_f32_batch batch;
+        for (auto * tokens : group) {
+            auto & src_entry = tokens->batch_f32.entries[0];
+            clip_image_f32_ptr cloned(clip_image_f32_init());
+            *cloned = *src_entry;
+            batch.entries.push_back(std::move(cloned));
+        }
+
+        int n_tokens_per_image = clip_n_output_tokens(ctx->ctx_v, group[0]->batch_f32.entries[0].get());
+        int total_floats = n_mmproj_embd * n_tokens_per_image * (int)group.size();
+        std::vector<float> batched_output(total_floats);
+
+        LOG_INF("%s: batch-encoding %zu images (%dx%d, id=%s)\n", __func__,
+            group.size(), key.nx, key.ny, key.id.c_str());
+
+        bool ok = clip_image_batch_encode(
+            ctx->ctx_v, ctx->n_threads, &batch, batched_output.data());
+        if (!ok) {
+            LOG_ERR("%s: failed to batch-encode %zu images\n", __func__, group.size());
+            return 1;
+        }
+
+        // distribute per-image results to cache
+        int per_image_floats = n_mmproj_embd * n_tokens_per_image;
+        for (size_t i = 0; i < group.size(); i++) {
+            std::vector<float> embd(per_image_floats);
+            std::memcpy(embd.data(),
+                        batched_output.data() + i * per_image_floats,
+                        per_image_floats * sizeof(float));
+            ctx->encode_cache[group[i]] = std::move(embd);
+        }
+    }
+
+    return 0;
+}
+
+void mtmd_clear_encode_cache(mtmd_context * ctx) {
+    ctx->encode_cache.clear();
 }
 
 void mtmd_debug_preprocess_image(mtmd_context * ctx, const std::vector<uint8_t> & rgb_values, int nx, int ny) {

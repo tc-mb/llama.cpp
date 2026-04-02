@@ -13,6 +13,8 @@
 
 #include <algorithm>
 #include <cinttypes>
+#include <cstdlib>
+#include <string>
 #include <vector>
 
 //#define MTMD_AUDIO_DEBUG
@@ -395,6 +397,21 @@ int32_t mtmd_helper_eval_chunks(mtmd_context * ctx,
         return 0;
     }
 
+    // batch pre-encode image chunks for models that support it (e.g. MiniCPM-V)
+    // set MTMD_NO_BATCH=1 to disable for benchmarking
+    const char * no_batch_env = getenv("MTMD_NO_BATCH");
+    bool use_batch = !(no_batch_env && std::string(no_batch_env) == "1");
+    if (use_batch) {
+        int64_t t_pre = ggml_time_ms();
+        int32_t pre_encode_ret = mtmd_batch_pre_encode(ctx, chunks);
+        int64_t t_pre_done = ggml_time_ms();
+        if (pre_encode_ret != 0) {
+            LOG_ERR("failed to batch pre-encode image chunks\n");
+            return pre_encode_ret;
+        }
+        LOG_INF("batch pre-encode took %" PRId64 " ms\n", t_pre_done - t_pre);
+    }
+
     for (size_t i = 0; i < n_chunks; i++) {
         bool chunk_logits_last = (i == n_chunks - 1) && logits_last;
         auto chunk = mtmd_input_chunks_get(chunks, i);
@@ -402,11 +419,13 @@ int32_t mtmd_helper_eval_chunks(mtmd_context * ctx,
         int32_t res = mtmd_helper_eval_chunk_single(ctx, lctx, chunk, n_past, seq_id, n_batch, chunk_logits_last, &n_past);
         if (res != 0) {
             LOG_ERR("failed to eval chunk %zu\n", i);
+            mtmd_clear_encode_cache(ctx);
             return res;
         }
         *new_n_past = n_past;
     }
 
+    mtmd_clear_encode_cache(ctx);
     return 0;
 }
 

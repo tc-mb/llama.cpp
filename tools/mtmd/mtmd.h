@@ -227,6 +227,16 @@ MTMD_API int32_t mtmd_encode_chunk(mtmd_context * ctx,
 // llama_model_n_embd_inp(model) * mtmd_input_chunk_get_n_tokens(chunk) * sizeof(float)
 MTMD_API float * mtmd_get_output_embd(mtmd_context * ctx);
 
+// batch pre-encode all image chunks in the given chunk list
+// this groups same-size images and batch-encodes them together for better performance
+// the results are cached internally; subsequent calls to mtmd_encode_chunk will use the cache
+// currently only effective for MiniCPM-V models
+// returns 0 on success
+MTMD_API int32_t mtmd_batch_pre_encode(mtmd_context * ctx, const mtmd_input_chunks * chunks);
+
+// clear the batch pre-encode cache
+MTMD_API void mtmd_clear_encode_cache(mtmd_context * ctx);
+
 // Set callback for all future logging events.
 // If this is not called, or NULL is supplied, everything is output on stderr.
 MTMD_API void mtmd_log_set(ggml_log_callback log_callback, void * user_data);

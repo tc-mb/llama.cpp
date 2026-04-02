@@ -6,7 +6,7 @@ ggml_cgraph * clip_graph_minicpmv::build() {
     const int n_embd_proj = n_mmproj_embd;
 
     // position embeddings for the projector (not for ViT)
-    // see: https://huggingface.co/openbmb/MiniCPM-o-2_6/blob/main/resampler.py#L70
+    // keep as [n_embd_proj, n_pos, 1] even for batch>1, ggml_add broadcasts
     // base frequency omega
     ggml_tensor * omega = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, n_embd_proj / 4);
     ggml_set_name(omega, "omega");
@@ -34,6 +34,7 @@ ggml_cgraph * clip_graph_minicpmv::build() {
                             hparams.ffn_op,
                             learned_pos_embd,
                             nullptr);
+    // embeddings shape: [n_embd, n_patches] (batch=1) or [n_embd, n_patches, batch_size] (batch>1)
 
     // resampler projector (it is just another transformer)
 
@@ -67,14 +68,13 @@ ggml_cgraph * clip_graph_minicpmv::build() {
         pos_embed = ggml_concat(ctx0, pos_embd_x, pos_embd_y, 0);
     }
 
-    // k = v + pos_embed
+    // k = v + pos_embed (pos_embed broadcasts over batch dim)
     ggml_tensor * k = ggml_add(ctx0, v, pos_embed);
 
     // attention
     {
         const int d_head = 128;
-        int n_head = n_embd_proj/d_head;
-        // Use actual config value if available, otherwise fall back to hardcoded values
+        int n_head_resampler = n_embd_proj/d_head;
         int num_query = hparams.minicpmv_query_num;
         ggml_tensor * Q = ggml_add(ctx0,
             build_mm(model.mm_model_attn_q_w, q),
@@ -86,15 +86,23 @@ ggml_cgraph * clip_graph_minicpmv::build() {
             build_mm(model.mm_model_attn_v_w, v),
             model.mm_model_attn_v_b);
 
-        Q = ggml_reshape_3d(ctx0, Q, d_head, n_head, num_query);
-        K = ggml_reshape_3d(ctx0, K, d_head, n_head, n_pos);
-        V = ggml_reshape_3d(ctx0, V, d_head, n_head, n_pos);
+        if (batch_size > 1) {
+            K = ggml_reshape_4d(ctx0, K, d_head, n_head_resampler, n_pos, batch_size);
+            V = ggml_reshape_4d(ctx0, V, d_head, n_head_resampler, n_pos, batch_size);
+            Q = ggml_reshape_3d(ctx0, Q, d_head, n_head_resampler, num_query);
+            ggml_tensor * Q_target = ggml_new_tensor_4d(ctx0, Q->type, d_head, n_head_resampler, num_query, batch_size);
+            Q = ggml_repeat(ctx0, Q, Q_target);
+        } else {
+            Q = ggml_reshape_3d(ctx0, Q, d_head, n_head_resampler, num_query);
+            K = ggml_reshape_3d(ctx0, K, d_head, n_head_resampler, n_pos);
+            V = ggml_reshape_3d(ctx0, V, d_head, n_head_resampler, n_pos);
+        }
 
         cb(Q, "resampler_Q", -1);
         cb(K, "resampler_K", -1);
         cb(V, "resampler_V", -1);
 
-        float resampler_kq_scale = 1.0f/ sqrtf(float(d_head));
+        float resampler_kq_scale = 1.0f / sqrtf(float(d_head));
         embeddings = build_attn(
             model.mm_model_attn_o_w,
             model.mm_model_attn_o_b,

@@ -16,8 +16,8 @@ struct clip_graph {
     const clip_hparams & hparams;
     projector_type proj_type;
 
-    // we only support single image per batch
-    const clip_image_f32 & img;
+    const clip_image_f32 & img; // reference image (all batched images must share dimensions)
+    const int batch_size;
 
     const int patch_size;
     const int n_patches_x;
@@ -36,7 +36,7 @@ struct clip_graph {
     ggml_context * ctx0;
     ggml_cgraph * gf;
 
-    clip_graph(clip_ctx * ctx, const clip_image_f32 & img);
+    clip_graph(clip_ctx * ctx, const clip_image_f32 & img, int batch_size = 1);
 
     virtual ~clip_graph() = default;
     virtual ggml_cgraph * build() = 0;
@@ -66,9 +66,10 @@ struct clip_graph {
                 std::function<ggml_tensor *(ggml_tensor *, const clip_layer &)> add_pos);
 
     // build the input after conv2d (inp_raw --> patches)
-    // returns tensor with shape [n_embd, n_patches]
+    // returns tensor with shape [n_embd, n_patches] (batch=1) or [n_embd, n_patches, batch_size] (batch>1)
     ggml_tensor * build_inp();
 
+    // returns tensor with shape [nx, ny, channels] (batch=1) or [nx, ny, channels, batch_size] (batch>1)
     ggml_tensor * build_inp_raw(int channels = 3);
 
     ggml_tensor * build_norm(

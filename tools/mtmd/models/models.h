@@ -33,7 +33,7 @@ struct clip_graph_youtuvl : clip_graph {
 };
 
 struct clip_graph_minicpmv : clip_graph {
-    clip_graph_minicpmv(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
+    clip_graph_minicpmv(clip_ctx * ctx, const clip_image_f32 & img, int batch_size = 1) : clip_graph(ctx, img, batch_size) {}
     ggml_cgraph * build() override;
 };
 
