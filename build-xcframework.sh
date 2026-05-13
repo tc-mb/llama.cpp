@@ -8,7 +8,10 @@ TVOS_MIN_OS_VERSION=16.4
 
 BUILD_SHARED_LIBS=OFF
 LLAMA_BUILD_EXAMPLES=OFF
-LLAMA_BUILD_TOOLS=OFF
+# Need TOOLS=ON so that tools/mtmd builds and we can ship libmtmd.a inside
+# the framework.  The MiniCPM-V demo's iOS bridge (MBMtmd) calls public mtmd
+# entry points; without this libmtmd.a is never produced.
+LLAMA_BUILD_TOOLS=ON
 LLAMA_BUILD_TESTS=OFF
 LLAMA_BUILD_SERVER=OFF
 GGML_METAL=ON
@@ -64,15 +67,43 @@ echo "Detected Xcode version: $XCODE_VERSION"
 
 set -e
 
+# Faster local iteration knob inherited from the demo fork:
+#   MINIMAL_MODE=ios-device — only iphoneos arm64 → build-apple/llama.xcframework (ios-arm64);
+#                             use this when iterating the MiniCPM-V demo on a real iOS device
+#                             (the demo's pbxproj only consumes the ios-arm64 slice anyway).
+#   MINIMAL_MODE=ios-sim    — only iphonesimulator arm64+x86_64 → for Xcode simulator runs.
+#   MINIMAL_MODE=ios        — iphoneos arm64 + iphonesimulator arm64+x86_64; covers both the
+#                             real-device and Simulator targets the demo actually uses.
+#                             This is the recommended default for demo-only iteration.
+#   MINIMAL_MODE=macos      — only native macOS slice; mostly for sanity-checking the build script.
+#   MINIMAL_MODE=all|unset  — full multi-platform (default; what the upstream maintainers ship).
+MINIMAL_MODE="${MINIMAL_MODE:-all}"
+
 ## Clean up previous builds
-rm -rf build-apple
-rm -rf build-ios-sim
-rm -rf build-ios-device
-rm -rf build-macos
-rm -rf build-visionos
-rm -rf build-visionos-sim
-rm -rf build-tvos-sim
-rm -rf build-tvos-device
+case "$MINIMAL_MODE" in
+    ios-device)
+        rm -rf build-apple build-ios-device
+        ;;
+    ios-sim)
+        rm -rf build-apple build-ios-sim
+        ;;
+    ios)
+        rm -rf build-apple build-ios-device build-ios-sim
+        ;;
+    macos)
+        rm -rf build-apple build-macos
+        ;;
+    *)
+        rm -rf build-apple
+        rm -rf build-ios-sim
+        rm -rf build-ios-device
+        rm -rf build-macos
+        rm -rf build-visionos
+        rm -rf build-visionos-sim
+        rm -rf build-tvos-sim
+        rm -rf build-tvos-device
+        ;;
+esac
 
 # Setup the xcframework build directory structure
 setup_framework_structure() {
@@ -122,6 +153,11 @@ setup_framework_structure() {
     cp ggml/include/ggml-cpu.h     ${header_path}
     cp ggml/include/ggml-blas.h    ${header_path}
     cp ggml/include/gguf.h         ${header_path}
+    # Public mtmd headers — needed by the MiniCPM-V demo's MBMtmd bridge.
+    # We deliberately do NOT ship the demo-private mtmd-ios.h anymore
+    # (that bridge has been moved into the demo repo as MBMtmd).
+    cp tools/mtmd/mtmd.h           ${header_path}
+    cp tools/mtmd/mtmd-helper.h    ${header_path}
 
     # Create module map (common for all platforms)
     cat > ${module_path}module.modulemap << EOF
@@ -134,6 +170,8 @@ framework module llama {
     header "ggml-cpu.h"
     header "ggml-blas.h"
     header "gguf.h"
+    header "mtmd.h"
+    header "mtmd-helper.h"
 
     link "c++"
     link framework "Accelerate"
@@ -250,6 +288,9 @@ combine_static_libraries() {
         "${base_dir}/${build_dir}/ggml/src/${release_dir}/libggml-cpu.a"
         "${base_dir}/${build_dir}/ggml/src/ggml-metal/${release_dir}/libggml-metal.a"
         "${base_dir}/${build_dir}/ggml/src/ggml-blas/${release_dir}/libggml-blas.a"
+        # libmtmd.a depends only on llama / ggml; common is NOT needed because
+        # the demo's MBMtmd bridge does not call any common/* helpers.
+        "${base_dir}/${build_dir}/tools/mtmd/${release_dir}/libmtmd.a"
     )
 
     # Create temporary directory for processing
@@ -401,142 +442,201 @@ combine_static_libraries() {
     rm -rf "${temp_dir}"
 }
 
-echo "Building for iOS simulator..."
-cmake -B build-ios-sim -G Xcode \
-    "${COMMON_CMAKE_ARGS[@]}" \
-    -DCMAKE_OSX_DEPLOYMENT_TARGET=${IOS_MIN_OS_VERSION} \
-    -DIOS=ON \
-    -DCMAKE_SYSTEM_NAME=iOS \
-    -DCMAKE_OSX_SYSROOT=iphonesimulator \
-    -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
-    -DCMAKE_XCODE_ATTRIBUTE_SUPPORTED_PLATFORMS=iphonesimulator \
-    -DCMAKE_C_FLAGS="${COMMON_C_FLAGS}" \
-    -DCMAKE_CXX_FLAGS="${COMMON_CXX_FLAGS}" \
-    -DLLAMA_OPENSSL=OFF \
-    -S .
-cmake --build build-ios-sim --config Release -- -quiet
+# Per-platform build helpers, refactored out of the previously-inlined
+# cmake invocations so MINIMAL_MODE can pick a subset.  Behaviour for the
+# default (MINIMAL_MODE=all) path is byte-for-byte unchanged.
 
-echo "Building for iOS devices..."
-cmake -B build-ios-device -G Xcode \
-    "${COMMON_CMAKE_ARGS[@]}" \
-    -DCMAKE_OSX_DEPLOYMENT_TARGET=${IOS_MIN_OS_VERSION} \
-    -DCMAKE_SYSTEM_NAME=iOS \
-    -DCMAKE_OSX_SYSROOT=iphoneos \
-    -DCMAKE_OSX_ARCHITECTURES="arm64" \
-    -DCMAKE_XCODE_ATTRIBUTE_SUPPORTED_PLATFORMS=iphoneos \
-    -DCMAKE_C_FLAGS="${COMMON_C_FLAGS}" \
-    -DCMAKE_CXX_FLAGS="${COMMON_CXX_FLAGS}" \
-    -DLLAMA_OPENSSL=OFF \
-    -S .
-cmake --build build-ios-device --config Release -- -quiet
+build_ios_sim() {
+    echo "Building for iOS simulator..."
+    cmake -B build-ios-sim -G Xcode \
+        "${COMMON_CMAKE_ARGS[@]}" \
+        -DCMAKE_OSX_DEPLOYMENT_TARGET=${IOS_MIN_OS_VERSION} \
+        -DIOS=ON \
+        -DCMAKE_SYSTEM_NAME=iOS \
+        -DCMAKE_OSX_SYSROOT=iphonesimulator \
+        -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+        -DCMAKE_XCODE_ATTRIBUTE_SUPPORTED_PLATFORMS=iphonesimulator \
+        -DCMAKE_C_FLAGS="${COMMON_C_FLAGS}" \
+        -DCMAKE_CXX_FLAGS="${COMMON_CXX_FLAGS}" \
+        -DLLAMA_OPENSSL=OFF \
+        -S .
+    cmake --build build-ios-sim --config Release -- -quiet
+}
 
-echo "Building for macOS..."
-cmake -B build-macos -G Xcode \
-    "${COMMON_CMAKE_ARGS[@]}" \
-    -DCMAKE_OSX_DEPLOYMENT_TARGET=${MACOS_MIN_OS_VERSION} \
-    -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
-    -DCMAKE_C_FLAGS="${COMMON_C_FLAGS}" \
-    -DCMAKE_CXX_FLAGS="${COMMON_CXX_FLAGS}" \
-    -DLLAMA_OPENSSL=OFF \
-    -S .
-cmake --build build-macos --config Release -- -quiet
+build_ios_device() {
+    echo "Building for iOS devices..."
+    cmake -B build-ios-device -G Xcode \
+        "${COMMON_CMAKE_ARGS[@]}" \
+        -DCMAKE_OSX_DEPLOYMENT_TARGET=${IOS_MIN_OS_VERSION} \
+        -DCMAKE_SYSTEM_NAME=iOS \
+        -DCMAKE_OSX_SYSROOT=iphoneos \
+        -DCMAKE_OSX_ARCHITECTURES="arm64" \
+        -DCMAKE_XCODE_ATTRIBUTE_SUPPORTED_PLATFORMS=iphoneos \
+        -DCMAKE_C_FLAGS="${COMMON_C_FLAGS}" \
+        -DCMAKE_CXX_FLAGS="${COMMON_CXX_FLAGS}" \
+        -DLLAMA_OPENSSL=OFF \
+        -S .
+    cmake --build build-ios-device --config Release -- -quiet
+}
 
-echo "Building for visionOS..."
-cmake -B build-visionos -G Xcode \
-    "${COMMON_CMAKE_ARGS[@]}" \
-    -DCMAKE_OSX_DEPLOYMENT_TARGET=${VISIONOS_MIN_OS_VERSION} \
-    -DCMAKE_OSX_ARCHITECTURES="arm64" \
-    -DCMAKE_SYSTEM_NAME=visionOS \
-    -DCMAKE_OSX_SYSROOT=xros \
-    -DCMAKE_XCODE_ATTRIBUTE_SUPPORTED_PLATFORMS=xros \
-    -DCMAKE_C_FLAGS="${COMMON_C_FLAGS}" \
-    -DCMAKE_CXX_FLAGS="${COMMON_CXX_FLAGS}" \
-    -DLLAMA_OPENSSL=OFF \
-    -DLLAMA_BUILD_SERVER=OFF \
-    -S .
-cmake --build build-visionos --config Release -- -quiet
+build_macos() {
+    echo "Building for macOS..."
+    cmake -B build-macos -G Xcode \
+        "${COMMON_CMAKE_ARGS[@]}" \
+        -DCMAKE_OSX_DEPLOYMENT_TARGET=${MACOS_MIN_OS_VERSION} \
+        -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+        -DCMAKE_C_FLAGS="${COMMON_C_FLAGS}" \
+        -DCMAKE_CXX_FLAGS="${COMMON_CXX_FLAGS}" \
+        -DLLAMA_OPENSSL=OFF \
+        -S .
+    cmake --build build-macos --config Release -- -quiet
+}
 
-echo "Building for visionOS simulator..."
-cmake -B build-visionos-sim -G Xcode \
-    "${COMMON_CMAKE_ARGS[@]}" \
-    -DCMAKE_OSX_DEPLOYMENT_TARGET=${VISIONOS_MIN_OS_VERSION} \
-    -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
-    -DCMAKE_SYSTEM_NAME=visionOS \
-    -DCMAKE_OSX_SYSROOT=xrsimulator \
-    -DCMAKE_XCODE_ATTRIBUTE_SUPPORTED_PLATFORMS=xrsimulator \
-    -DCMAKE_C_FLAGS="${COMMON_C_FLAGS}" \
-    -DCMAKE_CXX_FLAGS="${COMMON_CXX_FLAGS}" \
-    -DLLAMA_OPENSSL=OFF \
-    -DLLAMA_BUILD_SERVER=OFF \
-    -S .
-cmake --build build-visionos-sim --config Release -- -quiet
+build_visionos() {
+    echo "Building for visionOS..."
+    cmake -B build-visionos -G Xcode \
+        "${COMMON_CMAKE_ARGS[@]}" \
+        -DCMAKE_OSX_DEPLOYMENT_TARGET=${VISIONOS_MIN_OS_VERSION} \
+        -DCMAKE_OSX_ARCHITECTURES="arm64" \
+        -DCMAKE_SYSTEM_NAME=visionOS \
+        -DCMAKE_OSX_SYSROOT=xros \
+        -DCMAKE_XCODE_ATTRIBUTE_SUPPORTED_PLATFORMS=xros \
+        -DCMAKE_C_FLAGS="${COMMON_C_FLAGS}" \
+        -DCMAKE_CXX_FLAGS="${COMMON_CXX_FLAGS}" \
+        -DLLAMA_OPENSSL=OFF \
+        -DLLAMA_BUILD_SERVER=OFF \
+        -S .
+    cmake --build build-visionos --config Release -- -quiet
+}
 
-# Add tvOS builds (might need the same u_int definitions as watchOS and visionOS)
-echo "Building for tvOS simulator..."
-cmake -B build-tvos-sim -G Xcode \
-    "${COMMON_CMAKE_ARGS[@]}" \
-    -DCMAKE_OSX_DEPLOYMENT_TARGET=${TVOS_MIN_OS_VERSION} \
-    -DCMAKE_SYSTEM_NAME=tvOS \
-    -DCMAKE_OSX_SYSROOT=appletvsimulator \
-    -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
-    -DGGML_METAL=ON \
-    -DCMAKE_XCODE_ATTRIBUTE_SUPPORTED_PLATFORMS=appletvsimulator \
-    -DCMAKE_C_FLAGS="${COMMON_C_FLAGS}" \
-    -DCMAKE_CXX_FLAGS="${COMMON_CXX_FLAGS}" \
-    -DLLAMA_OPENSSL=OFF \
-    -S .
-cmake --build build-tvos-sim --config Release -- -quiet
+build_visionos_sim() {
+    echo "Building for visionOS simulator..."
+    cmake -B build-visionos-sim -G Xcode \
+        "${COMMON_CMAKE_ARGS[@]}" \
+        -DCMAKE_OSX_DEPLOYMENT_TARGET=${VISIONOS_MIN_OS_VERSION} \
+        -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+        -DCMAKE_SYSTEM_NAME=visionOS \
+        -DCMAKE_OSX_SYSROOT=xrsimulator \
+        -DCMAKE_XCODE_ATTRIBUTE_SUPPORTED_PLATFORMS=xrsimulator \
+        -DCMAKE_C_FLAGS="${COMMON_C_FLAGS}" \
+        -DCMAKE_CXX_FLAGS="${COMMON_CXX_FLAGS}" \
+        -DLLAMA_OPENSSL=OFF \
+        -DLLAMA_BUILD_SERVER=OFF \
+        -S .
+    cmake --build build-visionos-sim --config Release -- -quiet
+}
 
-echo "Building for tvOS devices..."
-cmake -B build-tvos-device -G Xcode \
-    "${COMMON_CMAKE_ARGS[@]}" \
-    -DCMAKE_OSX_DEPLOYMENT_TARGET=${TVOS_MIN_OS_VERSION} \
-    -DCMAKE_SYSTEM_NAME=tvOS \
-    -DCMAKE_OSX_SYSROOT=appletvos \
-    -DCMAKE_OSX_ARCHITECTURES="arm64" \
-    -DGGML_METAL=ON \
-    -DCMAKE_XCODE_ATTRIBUTE_SUPPORTED_PLATFORMS=appletvos \
-    -DCMAKE_C_FLAGS="${COMMON_C_FLAGS}" \
-    -DCMAKE_CXX_FLAGS="${COMMON_CXX_FLAGS}" \
-    -DLLAMA_OPENSSL=OFF \
-    -S .
-cmake --build build-tvos-device --config Release -- -quiet
+build_tvos_sim() {
+    echo "Building for tvOS simulator..."
+    cmake -B build-tvos-sim -G Xcode \
+        "${COMMON_CMAKE_ARGS[@]}" \
+        -DCMAKE_OSX_DEPLOYMENT_TARGET=${TVOS_MIN_OS_VERSION} \
+        -DCMAKE_SYSTEM_NAME=tvOS \
+        -DCMAKE_OSX_SYSROOT=appletvsimulator \
+        -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+        -DGGML_METAL=ON \
+        -DCMAKE_XCODE_ATTRIBUTE_SUPPORTED_PLATFORMS=appletvsimulator \
+        -DCMAKE_C_FLAGS="${COMMON_C_FLAGS}" \
+        -DCMAKE_CXX_FLAGS="${COMMON_CXX_FLAGS}" \
+        -DLLAMA_OPENSSL=OFF \
+        -S .
+    cmake --build build-tvos-sim --config Release -- -quiet
+}
 
-# Setup frameworks and copy binaries and headers
-echo "Setting up framework structures..."
-setup_framework_structure "build-ios-sim" ${IOS_MIN_OS_VERSION} "ios"
-setup_framework_structure "build-ios-device" ${IOS_MIN_OS_VERSION} "ios"
-setup_framework_structure "build-macos" ${MACOS_MIN_OS_VERSION} "macos"
-setup_framework_structure "build-visionos" ${VISIONOS_MIN_OS_VERSION} "visionos"
-setup_framework_structure "build-visionos-sim" ${VISIONOS_MIN_OS_VERSION} "visionos"
-setup_framework_structure "build-tvos-sim" ${TVOS_MIN_OS_VERSION} "tvos"
-setup_framework_structure "build-tvos-device" ${TVOS_MIN_OS_VERSION} "tvos"
+build_tvos_device() {
+    echo "Building for tvOS devices..."
+    cmake -B build-tvos-device -G Xcode \
+        "${COMMON_CMAKE_ARGS[@]}" \
+        -DCMAKE_OSX_DEPLOYMENT_TARGET=${TVOS_MIN_OS_VERSION} \
+        -DCMAKE_SYSTEM_NAME=tvOS \
+        -DCMAKE_OSX_SYSROOT=appletvos \
+        -DCMAKE_OSX_ARCHITECTURES="arm64" \
+        -DGGML_METAL=ON \
+        -DCMAKE_XCODE_ATTRIBUTE_SUPPORTED_PLATFORMS=appletvos \
+        -DCMAKE_C_FLAGS="${COMMON_C_FLAGS}" \
+        -DCMAKE_CXX_FLAGS="${COMMON_CXX_FLAGS}" \
+        -DLLAMA_OPENSSL=OFF \
+        -S .
+    cmake --build build-tvos-device --config Release -- -quiet
+}
 
-# Create dynamic libraries from static libraries
-echo "Creating dynamic libraries from static libraries..."
-combine_static_libraries "build-ios-sim" "Release-iphonesimulator" "ios" "true"
-combine_static_libraries "build-ios-device" "Release-iphoneos" "ios" "false"
-combine_static_libraries "build-macos" "Release" "macos" "false"
-combine_static_libraries "build-visionos" "Release-xros" "visionos" "false"
-combine_static_libraries "build-visionos-sim" "Release-xrsimulator" "visionos" "true"
-combine_static_libraries "build-tvos-sim" "Release-appletvsimulator" "tvos" "true"
-combine_static_libraries "build-tvos-device" "Release-appletvos" "tvos" "false"
+# Run platform builds + framework setup + libtool combine + record the
+# `-framework`/`-debug-symbols` pairs for the final xcframework.
+XCF_ARGS=()
+add_xcf_pair() {
+    XCF_ARGS+=( -framework "$(pwd)/$1/framework/llama.framework"
+                -debug-symbols "$(pwd)/$1/dSYMs/llama.dSYM" )
+}
+
+case "$MINIMAL_MODE" in
+    ios-device)
+        build_ios_device
+        setup_framework_structure "build-ios-device" ${IOS_MIN_OS_VERSION} "ios"
+        combine_static_libraries "build-ios-device" "Release-iphoneos" "ios" "false"
+        add_xcf_pair "build-ios-device"
+        ;;
+    ios-sim)
+        build_ios_sim
+        setup_framework_structure "build-ios-sim" ${IOS_MIN_OS_VERSION} "ios"
+        combine_static_libraries "build-ios-sim" "Release-iphonesimulator" "ios" "true"
+        add_xcf_pair "build-ios-sim"
+        ;;
+    ios)
+        build_ios_device
+        build_ios_sim
+        setup_framework_structure "build-ios-device" ${IOS_MIN_OS_VERSION} "ios"
+        setup_framework_structure "build-ios-sim"    ${IOS_MIN_OS_VERSION} "ios"
+        combine_static_libraries "build-ios-device" "Release-iphoneos"        "ios" "false"
+        combine_static_libraries "build-ios-sim"    "Release-iphonesimulator" "ios" "true"
+        add_xcf_pair "build-ios-device"
+        add_xcf_pair "build-ios-sim"
+        ;;
+    macos)
+        build_macos
+        setup_framework_structure "build-macos" ${MACOS_MIN_OS_VERSION} "macos"
+        combine_static_libraries "build-macos" "Release" "macos" "false"
+        add_xcf_pair "build-macos"
+        ;;
+    *)
+        # Full multi-platform build, identical to upstream.
+        build_ios_sim
+        build_ios_device
+        build_macos
+        build_visionos
+        build_visionos_sim
+        build_tvos_sim
+        build_tvos_device
+
+        echo "Setting up framework structures..."
+        setup_framework_structure "build-ios-sim"        ${IOS_MIN_OS_VERSION}      "ios"
+        setup_framework_structure "build-ios-device"     ${IOS_MIN_OS_VERSION}      "ios"
+        setup_framework_structure "build-macos"          ${MACOS_MIN_OS_VERSION}    "macos"
+        setup_framework_structure "build-visionos"       ${VISIONOS_MIN_OS_VERSION} "visionos"
+        setup_framework_structure "build-visionos-sim"   ${VISIONOS_MIN_OS_VERSION} "visionos"
+        setup_framework_structure "build-tvos-sim"       ${TVOS_MIN_OS_VERSION}     "tvos"
+        setup_framework_structure "build-tvos-device"    ${TVOS_MIN_OS_VERSION}     "tvos"
+
+        echo "Creating dynamic libraries from static libraries..."
+        combine_static_libraries "build-ios-sim"      "Release-iphonesimulator"  "ios"      "true"
+        combine_static_libraries "build-ios-device"   "Release-iphoneos"         "ios"      "false"
+        combine_static_libraries "build-macos"        "Release"                  "macos"    "false"
+        combine_static_libraries "build-visionos"     "Release-xros"             "visionos" "false"
+        combine_static_libraries "build-visionos-sim" "Release-xrsimulator"      "visionos" "true"
+        combine_static_libraries "build-tvos-sim"     "Release-appletvsimulator" "tvos"     "true"
+        combine_static_libraries "build-tvos-device"  "Release-appletvos"        "tvos"     "false"
+
+        add_xcf_pair "build-ios-sim"
+        add_xcf_pair "build-ios-device"
+        add_xcf_pair "build-macos"
+        add_xcf_pair "build-visionos"
+        add_xcf_pair "build-visionos-sim"
+        add_xcf_pair "build-tvos-device"
+        add_xcf_pair "build-tvos-sim"
+        ;;
+esac
 
 # Create XCFramework with correct debug symbols paths
-echo "Creating XCFramework..."
+echo "Creating XCFramework (MINIMAL_MODE=$MINIMAL_MODE)..."
 xcrun xcodebuild -create-xcframework \
-    -framework $(pwd)/build-ios-sim/framework/llama.framework \
-    -debug-symbols $(pwd)/build-ios-sim/dSYMs/llama.dSYM \
-    -framework $(pwd)/build-ios-device/framework/llama.framework \
-    -debug-symbols $(pwd)/build-ios-device/dSYMs/llama.dSYM \
-    -framework $(pwd)/build-macos/framework/llama.framework \
-    -debug-symbols $(pwd)/build-macos/dSYMs/llama.dSYM \
-    -framework $(pwd)/build-visionos/framework/llama.framework \
-    -debug-symbols $(pwd)/build-visionos/dSYMs/llama.dSYM \
-    -framework $(pwd)/build-visionos-sim/framework/llama.framework \
-    -debug-symbols $(pwd)/build-visionos-sim/dSYMs/llama.dSYM \
-    -framework $(pwd)/build-tvos-device/framework/llama.framework \
-    -debug-symbols $(pwd)/build-tvos-device/dSYMs/llama.dSYM \
-    -framework $(pwd)/build-tvos-sim/framework/llama.framework \
-    -debug-symbols $(pwd)/build-tvos-sim/dSYMs/llama.dSYM \
+    "${XCF_ARGS[@]}" \
     -output $(pwd)/build-apple/llama.xcframework
