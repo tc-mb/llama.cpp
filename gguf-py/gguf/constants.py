@@ -244,6 +244,7 @@ class Keys:
     class Tokenizer:
         MODEL                = "tokenizer.ggml.model"
         PRE                  = "tokenizer.ggml.pre"
+        PRE_TOKENIZER_REGEX  = "tokenizer.ggml.pre_tokenizer_regex"
         LIST                 = "tokenizer.ggml.tokens"
         TOKEN_TYPE           = "tokenizer.ggml.token_type"
         TOKEN_TYPE_COUNT     = "tokenizer.ggml.token_type_count"  # for BERT-style token types

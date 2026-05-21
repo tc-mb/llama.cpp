@@ -1573,6 +1573,9 @@ class TextModel(ModelBase):
         if chkhsh == "62f6fb0a6fd5098caeabb19b07a5c1099cafc8b9c40eab6ea89ece4ec02fbc57":
             # ref: https://huggingface.co/sarvamai/sarvam-30b
             res = "sarvam-moe"
+        if chkhsh == "2360c4549c2e7b27e6a2a0a8414392a41e370e0d398037a67c71850a515b0e4e":
+            # ref: MiniCPM5-0.9B (Llama3-style BPE with ByteLevel decoder)
+            res = "minicpm5"
 
         if res is None:
             logger.warning("\n")
@@ -1785,6 +1788,65 @@ class TextModel(ModelBase):
 
         special_vocab = gguf.SpecialVocab(self.dir_model, n_vocab=len(tokens))
         special_vocab.add_to_gguf(self.gguf_writer)
+
+    @staticmethod
+    def _extract_pre_tokenizer_regexes(tokenizer_json: dict) -> list[str]:
+        """Extract regex patterns from HF tokenizer.json pre_tokenizer section,
+        converting to C++ std::regex-compatible syntax."""
+        pre_tok = tokenizer_json.get("pre_tokenizer")
+        if pre_tok is None:
+            return []
+
+        regexes: list[str] = []
+
+        def adapt_for_cpp_regex(rx: str) -> str:
+            import re as _re
+            def _expand_case_insensitive(m: _re.Match) -> str:
+                inner = m.group(1)
+                parts = inner.split('|')
+                expanded_parts = []
+                for p in parts:
+                    chars = []
+                    for c in p:
+                        lo = c.lower()
+                        up = c.upper()
+                        if lo != up:
+                            chars.append(f'[{lo}{up}]')
+                        else:
+                            chars.append(_re.escape(c))
+                    expanded_parts.append(''.join(chars))
+                return '(?:' + '|'.join(expanded_parts) + ')'
+            rx = _re.sub(r'\(\?i:([^()]*(?:\([^()]*\)[^()]*)*)\)', _expand_case_insensitive, rx)
+            return rx
+
+        def extract(step: dict) -> None:
+            if step.get("type") == "Split" and "pattern" in step:
+                pattern = step["pattern"]
+                if "Regex" in pattern:
+                    rx = adapt_for_cpp_regex(pattern["Regex"])
+                    regexes.append(rx)
+                elif "String" in pattern:
+                    escaped = re.escape(pattern["String"])
+                    regexes.append(escaped)
+            elif step.get("type") == "Sequence":
+                for sub in step.get("pretokenizers", []):
+                    extract(sub)
+
+        extract(pre_tok)
+        return regexes
+
+    def _write_pre_tokenizer_regex(self) -> None:
+        """Write the HF pre-tokenizer regex patterns to GGUF if available."""
+        tokenizer_json_file = self.dir_model / "tokenizer.json"
+        if not tokenizer_json_file.is_file():
+            return
+
+        import json
+        with open(tokenizer_json_file, 'r', encoding='utf-8') as f:
+            tok_json = json.load(f)
+        regexes = self._extract_pre_tokenizer_regexes(tok_json)
+        if regexes:
+            self.gguf_writer.add_tokenizer_pre_regex(regexes)
 
     def _set_vocab_rwkv_world(self):
         assert (self.dir_model / "rwkv_vocab_v20230424.txt").is_file()
@@ -2860,6 +2922,18 @@ class LlamaModel(TextModel):
     model_arch = gguf.MODEL_ARCH.LLAMA
     undo_permute = True
 
+    def _is_minicpm5(self) -> bool:
+        if str(self.hparams.get("_name_or_path", "")).startswith("openbmb/MiniCPM5-"):
+            return True
+
+        config_json_file = self.dir_model / "config.json"
+        if not config_json_file.is_file():
+            return False
+
+        with open(config_json_file, "r", encoding="utf-8") as f:
+            raw_config = json.load(f)
+        return str(raw_config.get("_name_or_path", "")).startswith("openbmb/MiniCPM5-")
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # fix for SmolVLM2, missing `num_attention_heads` in config.json
@@ -2883,6 +2957,26 @@ class LlamaModel(TextModel):
         path_tokenizer_json = self.dir_model / "tokenizer.json"
         if path_tekken_json.is_file() and not path_tokenizer_json.is_file():
             self._set_vocab_mistral()
+
+        if self._is_minicpm5() and path_tokenizer_json.is_file():
+            try:
+                self._set_vocab_gpt2()
+            except (FileNotFoundError, TypeError):
+                try:
+                    self._set_vocab_llama_hf()
+                except (FileNotFoundError, TypeError):
+                    try:
+                        self._set_vocab_sentencepiece()
+                    except FileNotFoundError:
+                        pass
+            self._write_pre_tokenizer_regex()
+            # MiniCPM5 uses <|im_end|> (token 130073) to terminate assistant
+            # turns. Register it as EOT so llama_vocab_is_eog() recognises it;
+            # the primary eos_token_id (1, </s>) is already set by SpecialVocab.
+            eos_ids = self.hparams.get("eos_token_id", [])
+            if isinstance(eos_ids, list) and len(eos_ids) > 1:
+                self.gguf_writer.add_eot_token_id(eos_ids[1])
+            return
 
         try:
             self._set_vocab_sentencepiece()

@@ -503,6 +503,9 @@ struct llm_tokenizer_bpe : llm_tokenizer {
                 };
                 byte_encode = false; // uses raw UTF-8, not GPT-2 byte encoding
                 break;
+            case LLAMA_VOCAB_PRE_TYPE_CUSTOM_REGEX:
+                regex_exprs = vocab.get_custom_pre_regexes();
+                break;
             case LLAMA_VOCAB_PRE_TYPE_SARVAM_MOE:
                 // Sarvam uses SPM-style BPE (same shape as Gemma4): spaces replaced with U+2581
                 // by the normalizer, BPE merges over the whole text on raw UTF-8.
@@ -1623,6 +1626,9 @@ struct llama_vocab::impl {
     std::string tokenizer_model;
     std::string tokenizer_pre;
 
+    // custom pre-tokenizer regex patterns (from HF tokenizer.json)
+    std::vector<std::string> custom_pre_regexes;
+
     enum llama_vocab_type     type     = LLAMA_VOCAB_TYPE_SPM;
     enum llama_vocab_pre_type pre_type = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
 
@@ -1953,7 +1959,9 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
                 LLAMA_LOG_WARN("%s: ************************************        \n", __func__);
                 LLAMA_LOG_WARN("%s:                                             \n", __func__);
                 pre_type = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
-            } else if (tokenizer_pre == "default") {
+            } else if (
+                    tokenizer_pre == "default" ||
+                    tokenizer_pre == "minicpm5") {
                 pre_type = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
             } else if (
                     tokenizer_pre == "llama3"   ||
@@ -2205,6 +2213,21 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
 
         ml.get_key(LLM_KV_TOKENIZER_ADD_PREFIX,      add_space_prefix,         false);
         ml.get_key(LLM_KV_TOKENIZER_REMOVE_EXTRA_WS, remove_extra_whitespaces, false);
+    }
+
+    // Read custom pre-tokenizer regex patterns if present
+    {
+        const int regex_idx = gguf_find_key(ctx, kv(LLM_KV_TOKENIZER_PRE_REGEX).c_str());
+        if (regex_idx != -1) {
+            const uint32_t n_regex = gguf_get_arr_n(ctx, regex_idx);
+            custom_pre_regexes.resize(n_regex);
+            for (uint32_t i = 0; i < n_regex; i++) {
+                custom_pre_regexes[i] = gguf_get_arr_str(ctx, regex_idx, i);
+            }
+            pre_type = LLAMA_VOCAB_PRE_TYPE_CUSTOM_REGEX;
+            LLAMA_LOG_INFO("%s: using custom pre-tokenizer regex (%u patterns)\n",
+                           __func__, n_regex);
+        }
     }
 
     const int token_idx = gguf_find_key(ctx, kv(LLM_KV_TOKENIZER_LIST).c_str());
@@ -3799,6 +3822,10 @@ std::vector<std::string> llama_vocab::get_bpe_merges() const {
 
 std::vector<char> llama_vocab::get_precompiled_charsmap() const {
     return pimpl->precompiled_charsmap;
+}
+
+const std::vector<std::string> & llama_vocab::get_custom_pre_regexes() const {
+    return pimpl->custom_pre_regexes;
 }
 
 int32_t llama_vocab::tokenize(

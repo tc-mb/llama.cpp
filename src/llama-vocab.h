@@ -60,6 +60,7 @@ enum llama_vocab_pre_type {
     LLAMA_VOCAB_PRE_TYPE_JAIS2           = 49,
     LLAMA_VOCAB_PRE_TYPE_GEMMA4          = 50,
     LLAMA_VOCAB_PRE_TYPE_SARVAM_MOE      = 51,
+    LLAMA_VOCAB_PRE_TYPE_CUSTOM_REGEX    = 52,
 };
 
 struct LLM_KV;
@@ -144,6 +145,8 @@ struct llama_vocab {
     std::vector<std::string> get_bpe_merges() const;
 
     std::vector<char> get_precompiled_charsmap() const;
+
+    const std::vector<std::string> & get_custom_pre_regexes() const;
 
     int32_t tokenize(
                    const char * text,

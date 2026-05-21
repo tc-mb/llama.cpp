@@ -316,6 +316,9 @@ void llama_model_saver::add_kv_from_model() {
 
     add_kv(LLM_KV_TOKENIZER_MODEL,                   vocab.get_tokenizer_model());
     add_kv(LLM_KV_TOKENIZER_PRE,                     vocab.get_tokenizer_pre());
+    if (!vocab.get_custom_pre_regexes().empty()) {
+        add_kv(LLM_KV_TOKENIZER_PRE_REGEX,           vocab.get_custom_pre_regexes());
+    }
     add_kv(LLM_KV_TOKENIZER_LIST,                    tokens);
     add_kv(LLM_KV_TOKENIZER_TOKEN_TYPE,              token_types);
     add_kv(LLM_KV_TOKENIZER_TOKEN_TYPE_COUNT,        vocab.n_token_types());
