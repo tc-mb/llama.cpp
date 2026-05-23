@@ -197,6 +197,9 @@ struct clip_ctx {
         if (ctx_params.image_max_tokens > 0) {
             model.hparams.custom_image_max_tokens = ctx_params.image_max_tokens;
         }
+        if (ctx_params.image_max_slice_nums > 0) {
+            model.hparams.custom_image_max_slice_nums = ctx_params.image_max_slice_nums;
+        }
 
         backend_ptrs.push_back(backend_cpu);
         backend_buft.push_back(ggml_backend_get_default_buffer_type(backend_cpu));
@@ -4341,6 +4344,18 @@ void clip_image_f32_batch_add_mel(struct clip_image_f32_batch * batch, int n_mel
 
 const clip_hparams * clip_get_hparams(const struct clip_ctx * ctx) {
     return &ctx->model.hparams;
+}
+
+// Update the slice cap *in place* so we don't have to reload the mmproj
+// just to switch detail levels.  The slicing decision is made every time
+// we encode an image (see get_slice_instructions in mtmd-image.cpp), so
+// the next encode picks up the new value automatically.
+void clip_set_image_max_slice_nums(struct clip_ctx * ctx, int n) {
+    if (!ctx) return;
+    // n <= 0 means "fall back to model default" (same convention as
+    // clip_context_params.image_max_slice_nums = -1).  Store that
+    // intent by writing -1 so the read path's "> 0" check kicks in.
+    ctx->model.hparams.custom_image_max_slice_nums = (n > 0) ? n : -1;
 }
 
 //

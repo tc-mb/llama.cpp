@@ -117,6 +117,8 @@ struct clip_hparams {
     // custom value provided by user, can be undefined if not set
     int32_t custom_image_min_tokens = -1;
     int32_t custom_image_max_tokens = -1;
+    // upper bound on llava-uhd slice/tile count (e.g. minicpm-v). -1 = use built-in default.
+    int32_t custom_image_max_slice_nums = -1;
 
     void set_limit_image_tokens(int n_tokens_min, int n_tokens_max) {
         const int cur_merge = n_merge == 0 ? 1 : n_merge;

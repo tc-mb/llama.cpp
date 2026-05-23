@@ -121,17 +121,18 @@ static clip_flash_attn_type mtmd_get_clip_flash_attn_type(enum llama_flash_attn_
 
 mtmd_context_params mtmd_context_params_default() {
     mtmd_context_params params {
-        /* use_gpu           */ true,
-        /* print_timings     */ true,
-        /* n_threads         */ 4,
-        /* image_marker      */ nullptr,
-        /* media_marker      */ mtmd_default_marker(),
-        /* flash_attn_type   */ LLAMA_FLASH_ATTN_TYPE_AUTO,
-        /* warmup            */ true,
-        /* image_min_tokens  */ -1,
-        /* image_max_tokens  */ -1,
-        /* cb_eval           */ nullptr,
-        /* cb_eval_user_data */ nullptr,
+        /* use_gpu              */ true,
+        /* print_timings        */ true,
+        /* n_threads            */ 4,
+        /* image_marker         */ nullptr,
+        /* media_marker         */ mtmd_default_marker(),
+        /* flash_attn_type      */ LLAMA_FLASH_ATTN_TYPE_AUTO,
+        /* warmup               */ true,
+        /* image_min_tokens     */ -1,
+        /* image_max_tokens     */ -1,
+        /* image_max_slice_nums */ -1,
+        /* cb_eval              */ nullptr,
+        /* cb_eval_user_data    */ nullptr,
     };
     return params;
 }
@@ -211,13 +212,14 @@ struct mtmd_context {
         }
 
         clip_context_params ctx_clip_params {
-            /* use_gpu           */ ctx_params.use_gpu,
-            /* flash_attn_type   */ mtmd_get_clip_flash_attn_type(ctx_params.flash_attn_type),
-            /* image_min_tokens  */ ctx_params.image_min_tokens,
-            /* image_max_tokens  */ ctx_params.image_max_tokens,
-            /* warmup            */ ctx_params.warmup,
-            /* cb_eval           */ ctx_params.cb_eval,
-            /* cb_eval_user_data */ ctx_params.cb_eval_user_data,
+            /* use_gpu              */ ctx_params.use_gpu,
+            /* flash_attn_type      */ mtmd_get_clip_flash_attn_type(ctx_params.flash_attn_type),
+            /* image_min_tokens     */ ctx_params.image_min_tokens,
+            /* image_max_tokens     */ ctx_params.image_max_tokens,
+            /* image_max_slice_nums */ ctx_params.image_max_slice_nums,
+            /* warmup               */ ctx_params.warmup,
+            /* cb_eval              */ ctx_params.cb_eval,
+            /* cb_eval_user_data    */ ctx_params.cb_eval_user_data,
         };
 
         auto res = clip_init(mmproj_fname, ctx_clip_params);
@@ -627,6 +629,11 @@ mtmd_context * mtmd_init_from_file(const char * mmproj_fname,
 
 void mtmd_free(mtmd_context * ctx) {
     delete ctx;
+}
+
+void mtmd_set_image_max_slice_nums(mtmd_context * ctx, int n) {
+    if (!ctx || !ctx->ctx_v) return;
+    clip_set_image_max_slice_nums(ctx->ctx_v, n);
 }
 
 struct mtmd_tokenizer {

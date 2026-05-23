@@ -37,6 +37,7 @@ struct clip_context_params {
     enum clip_flash_attn_type flash_attn_type;
     int image_min_tokens;
     int image_max_tokens;
+    int image_max_slice_nums; // -1 = use model default (currently 9 for minicpm-v)
     bool warmup;
     ggml_backend_sched_eval_callback cb_eval;
     void * cb_eval_user_data;
@@ -122,3 +123,9 @@ struct clip_cap {
     bool has_audio;
 };
 struct clip_cap clip_get_cap(const char * fname);
+
+// Runtime override of the per-image slice cap used by llava-uhd style
+// pre-processing (e.g. MiniCPM-V).  Pass -1 to revert to the model
+// default, or 1 to disable slicing entirely (overview image only).
+// Safe to call between images; only takes effect on the next encode.
+void clip_set_image_max_slice_nums(struct clip_ctx * ctx, int n);

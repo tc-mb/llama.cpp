@@ -645,7 +645,21 @@ mtmd_image_preprocessor_llava_uhd::slice_instructions mtmd_image_preprocessor_ll
     res.overview_size = best_size;
 
     {
-        const int max_slice_nums = 9; // TODO: this is only used by minicpmv, maybe remove it
+        // upper bound on slice count for minicpm-v style models.
+        // built-in default is 9 (1 overview + up to 8 detail tiles, the standard MiniCPM-V config);
+        // can be overridden via mtmd_context_params.image_max_slice_nums (e.g. set to 1 on
+        // mobile to skip slicing entirely - much faster but loses high-resolution detail).
+        const int max_slice_nums = hparams.custom_image_max_slice_nums > 0
+            ? hparams.custom_image_max_slice_nums
+            : 9;
+
+        if (max_slice_nums <= 1) {
+            res.overview_size = get_best_resize(original_size, slice_size, patch_size, true);
+            res.refined_size  = clip_image_size{0, 0};
+            res.grid_size     = clip_image_size{1, 1};
+            return res;
+        }
+
         const float log_ratio = log((float)original_width / original_height);
         const float ratio = (float)original_width * original_height / (slice_size * slice_size);
         const int multiple = fmin(ceil(ratio), max_slice_nums);
