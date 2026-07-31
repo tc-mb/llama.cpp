@@ -102,6 +102,14 @@ struct clip_hparams {
     int32_t sam_n_head  = 0;
     int32_t sam_n_embd  = 0;
 
+    // minicpm-robottrack (siglip tower; dino tower uses the generic vision.* hparams)
+    int32_t siglip_n_embd     = 0;
+    int32_t siglip_n_ff       = 0;
+    int32_t siglip_n_layer    = 0;
+    int32_t siglip_n_head     = 0;
+    int32_t siglip_patch_size = 0;
+    float   siglip_eps        = 1e-6f;
+
     // Granite4 Vision
     std::vector<int32_t> proj_spatial_offsets;
     int32_t downsample_query_side;
@@ -602,6 +610,37 @@ struct clip_model {
     // deepseek-ocr-2
     ggml_tensor * resample_query_768 = nullptr;
     ggml_tensor * resample_query_1024 = nullptr;
+
+    // minicpm-robottrack: dual vision tower + shared projector
+    // dino tower
+    ggml_tensor * minicpm_track_dino_patch_w   = nullptr;
+    ggml_tensor * minicpm_track_dino_patch_b   = nullptr;
+    ggml_tensor * minicpm_track_dino_cls       = nullptr;
+    ggml_tensor * minicpm_track_dino_register  = nullptr;
+    ggml_tensor * minicpm_track_dino_post_ln_w = nullptr;
+    ggml_tensor * minicpm_track_dino_post_ln_b = nullptr;
+    ggml_tensor * minicpm_track_dino_rope_cos  = nullptr;
+    ggml_tensor * minicpm_track_dino_rope_sin  = nullptr;
+    ggml_tensor * minicpm_track_dino_mean      = nullptr;
+    ggml_tensor * minicpm_track_dino_inv_std   = nullptr;
+    std::vector<clip_layer> minicpm_track_dino_layers;
+    // siglip tower
+    ggml_tensor * minicpm_track_siglip_patch_w   = nullptr;
+    ggml_tensor * minicpm_track_siglip_patch_b   = nullptr;
+    ggml_tensor * minicpm_track_siglip_pos       = nullptr;
+    ggml_tensor * minicpm_track_siglip_post_ln_w = nullptr;
+    ggml_tensor * minicpm_track_siglip_post_ln_b = nullptr;
+    ggml_tensor * minicpm_track_siglip_pool      = nullptr;
+    ggml_tensor * minicpm_track_siglip_mean      = nullptr;
+    ggml_tensor * minicpm_track_siglip_inv_std   = nullptr;
+    std::vector<clip_layer> minicpm_track_siglip_layers;
+    // VisionProjector: LayerNorm -> Linear -> GELU -> Linear
+    ggml_tensor * minicpm_track_mm_norm_w = nullptr;
+    ggml_tensor * minicpm_track_mm_norm_b = nullptr;
+    ggml_tensor * minicpm_track_mm_fc1_w  = nullptr;
+    ggml_tensor * minicpm_track_mm_fc1_b  = nullptr;
+    ggml_tensor * minicpm_track_mm_fc2_w  = nullptr;
+    ggml_tensor * minicpm_track_mm_fc2_b  = nullptr;
 
     // lfm2 audio
     std::array<ggml_tensor *, 7> pre_encode_conv_X_w = {nullptr};

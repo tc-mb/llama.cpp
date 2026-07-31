@@ -53,6 +53,7 @@
 #define KEY_PREPROC_MAX_TILES       "clip.vision.preproc_max_tiles"
 #define KEY_PREPROC_IMAGE_SIZE      "clip.vision.preproc_image_size"
 #define KEY_PATCH_SIZE              "clip.vision.patch_size"
+#define KEY_PATCH_SIZE_SIGLIP       "clip.vision.siglip.patch_size" // minicpm-robottrack second tower
 #define KEY_IMAGE_MEAN              "clip.vision.image_mean"
 #define KEY_IMAGE_STD               "clip.vision.image_std"
 #define KEY_PROJ_SCALE_FACTOR       "clip.vision.projector.scale_factor"
@@ -227,6 +228,17 @@
 #define TN_SAM_NET        "v.sam.net_%d.%s"
 // deepseek-ocr-2
 #define TN_RESMPL_QUERY  "v.resample_query_%d.%s"
+// minicpm-robottrack (dino + siglip dual vision tower)
+#define TN_MT_PATCH_EMBD    "%s.patch_embd.%s"   // %s = v.dino / v.siglip
+#define TN_MT_CLASS_EMBD    "%s.class_embd"
+#define TN_MT_REGISTER      "%s.register_embd"
+#define TN_MT_IMAGE_MEAN    "%s.image_mean"
+#define TN_MT_IMAGE_INV_STD "%s.image_inv_std"
+#define TN_MT_DINO_ROPE_COS "v.dino.rope_cos"
+#define TN_MT_DINO_ROPE_SIN "v.dino.rope_sin"
+#define TN_MT_SIGLIP_POOL   "v.siglip.pool"
+#define TN_MT_MM_FC1        "mm.fc1.%s"
+#define TN_MT_MM_FC2        "mm.fc2.%s"
 // (conformer) lfm2
 #define TN_PRE_ENCODE_OUT  "a.pre_encode.out.%s"
 #define TN_FFN_NORM        "%s.blk.%d.ffn_norm.%s"
@@ -398,6 +410,7 @@ enum projector_type {
     PROJECTOR_TYPE_MIMOVL,
     PROJECTOR_TYPE_MINIMAX_M3,
     PROJECTOR_TYPE_GRANITE4_VISION,
+    PROJECTOR_TYPE_MINICPM_TRACK,
     PROJECTOR_TYPE_MIMO_AUDIO,
     PROJECTOR_TYPE_UNKNOWN,
 };
@@ -455,6 +468,7 @@ static std::map<projector_type, std::string> PROJECTOR_TYPE_NAMES = {
     { PROJECTOR_TYPE_MINIMAX_M3,        "minimax_m3"},
     { PROJECTOR_TYPE_GRANITE4_VISION,   "granite4_vision"},
     { PROJECTOR_TYPE_MIMO_AUDIO,        "mimo_audio"},
+    { PROJECTOR_TYPE_MINICPM_TRACK,     "minicpm_track"},
 };
 
 static projector_type clip_projector_type_from_string(const std::string & str) {

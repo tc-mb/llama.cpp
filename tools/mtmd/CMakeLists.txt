@@ -57,6 +57,7 @@ add_library(mtmd
             models/whisper-enc.cpp
             models/deepseekocr.cpp
             models/deepseekocr2.cpp
+            models/minicpm_track.cpp
             models/mobilenetv5.cpp
             models/youtuvl.cpp
             models/yasa2.cpp

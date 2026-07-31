@@ -997,6 +997,10 @@ static std::unique_ptr<clip_graph> clip_get_graph_builder(clip_ctx * ctx, const 
              {
                 builder = std::make_unique<clip_graph_deepseekocr2>(ctx, img);
             } break;
+        case PROJECTOR_TYPE_MINICPM_TRACK:
+            {
+                builder = std::make_unique<clip_graph_minicpm_track>(ctx, img);
+            } break;
         case PROJECTOR_TYPE_LFM2A:
             {
                 builder = std::make_unique<clip_graph_conformer>(ctx, img);
@@ -1663,6 +1667,22 @@ struct clip_model_loader {
                             get_u32(string_format(KEY_N_HEAD_KV, "vision"), hparams.n_head_kv);
                         }
                      } break;
+                case PROJECTOR_TYPE_MINICPM_TRACK:
+                    {
+                        // dino tower reuses the generic vision.* hparams (n_embd/n_head/eps=1e-5, patch 16);
+                        // the siglip tower has its own dims under clip.vision.siglip.*
+                        get_u32(string_format(KEY_N_EMBD,  "vision.siglip"), hparams.siglip_n_embd);
+                        get_u32(string_format(KEY_N_FF,    "vision.siglip"), hparams.siglip_n_ff);
+                        get_u32(string_format(KEY_N_BLOCK, "vision.siglip"), hparams.siglip_n_layer);
+                        get_u32(string_format(KEY_N_HEAD,  "vision.siglip"), hparams.siglip_n_head);
+                        get_u32(string_format(KEY_PATCH_SIZE_SIGLIP),        hparams.siglip_patch_size);
+                        get_f32(string_format(KEY_LAYER_NORM_EPS, "vision.siglip"), hparams.siglip_eps);
+                        // single square resize with Pillow-matching bicubic (the reference
+                        // pipeline uses PIL BICUBIC); /255 only, per-tower mean/std applied in-graph.
+                        // PAD_NONE => stretch to image_size^2 (PIL .resize ignores aspect ratio).
+                        hparams.image_resize_algo = RESIZE_ALGO_BICUBIC_PILLOW;
+                        hparams.image_resize_pad  = PAD_NONE;
+                    } break;
                 case PROJECTOR_TYPE_HUNYUANVL:
                     {
                         hparams.n_merge = 2;
@@ -1923,7 +1943,8 @@ struct clip_model_loader {
         model.position_embeddings = get_tensor(string_format(TN_POS_EMBD, prefix), false);
 
         const bool has_standard_layers = (
-            model.proj_type != PROJECTOR_TYPE_GEMMA3NV);
+            model.proj_type != PROJECTOR_TYPE_GEMMA3NV &&
+            model.proj_type != PROJECTOR_TYPE_MINICPM_TRACK); // dual-tower loads its own layers below
 
         // layers
         const int n_layers_to_load = has_standard_layers ? hparams.n_layer : 0;
@@ -2679,6 +2700,62 @@ struct clip_model_loader {
                     model.mm_fc_b        = get_tensor(string_format(TN_MM_PROJECTOR, "bias"));
                     model.resample_query_768  = get_tensor(string_format(TN_RESMPL_QUERY, 768, "weight"), false);
                     model.resample_query_1024 = get_tensor(string_format(TN_RESMPL_QUERY, 1024, "weight"), false);
+                 } break;
+            case PROJECTOR_TYPE_MINICPM_TRACK:
+                {
+                    auto load_tower = [&](const char * pfx, std::vector<clip_layer> & layers, int n) {
+                        layers.resize(n);
+                        for (int il = 0; il < n; ++il) {
+                            auto & layer = layers[il];
+                            layer.ln_1_w    = get_tensor(string_format(TN_LN_1,        pfx, il, "weight"));
+                            layer.ln_1_b    = get_tensor(string_format(TN_LN_1,        pfx, il, "bias"));
+                            layer.q_w       = get_tensor(string_format(TN_ATTN_Q,      pfx, il, "weight"));
+                            layer.q_b       = get_tensor(string_format(TN_ATTN_Q,      pfx, il, "bias"), false);
+                            layer.k_w       = get_tensor(string_format(TN_ATTN_K,      pfx, il, "weight"));
+                            layer.k_b       = get_tensor(string_format(TN_ATTN_K,      pfx, il, "bias"), false);
+                            layer.v_w       = get_tensor(string_format(TN_ATTN_V,      pfx, il, "weight"));
+                            layer.v_b       = get_tensor(string_format(TN_ATTN_V,      pfx, il, "bias"), false);
+                            layer.o_w       = get_tensor(string_format(TN_ATTN_OUTPUT, pfx, il, "weight"));
+                            layer.o_b       = get_tensor(string_format(TN_ATTN_OUTPUT, pfx, il, "bias"), false);
+                            layer.ln_2_w    = get_tensor(string_format(TN_LN_2,        pfx, il, "weight"));
+                            layer.ln_2_b    = get_tensor(string_format(TN_LN_2,        pfx, il, "bias"));
+                            layer.ff_up_w   = get_tensor(string_format(TN_FFN_UP,      pfx, il, "weight"));
+                            layer.ff_up_b   = get_tensor(string_format(TN_FFN_UP,      pfx, il, "bias"), false);
+                            layer.ff_down_w = get_tensor(string_format(TN_FFN_DOWN,    pfx, il, "weight"));
+                            layer.ff_down_b = get_tensor(string_format(TN_FFN_DOWN,    pfx, il, "bias"), false);
+                            layer.ls_1_w    = get_tensor(string_format(TN_LS_1,        pfx, il, "weight"), false);
+                            layer.ls_2_w    = get_tensor(string_format(TN_LS_2,        pfx, il, "weight"), false);
+                        }
+                    };
+                    load_tower("v.dino",   model.minicpm_track_dino_layers,   hparams.n_layer);
+                    load_tower("v.siglip", model.minicpm_track_siglip_layers, hparams.siglip_n_layer);
+
+                    model.minicpm_track_dino_patch_w   = get_tensor(string_format(TN_MT_PATCH_EMBD, "v.dino", "weight"));
+                    model.minicpm_track_dino_patch_b   = get_tensor(string_format(TN_MT_PATCH_EMBD, "v.dino", "bias"));
+                    model.minicpm_track_dino_cls       = get_tensor(string_format(TN_MT_CLASS_EMBD, "v.dino"));
+                    model.minicpm_track_dino_register  = get_tensor(string_format(TN_MT_REGISTER,   "v.dino"));
+                    model.minicpm_track_dino_post_ln_w = get_tensor(string_format(TN_LN_POST,       "v.dino", "weight"));
+                    model.minicpm_track_dino_post_ln_b = get_tensor(string_format(TN_LN_POST,       "v.dino", "bias"));
+                    model.minicpm_track_dino_rope_cos  = get_tensor(TN_MT_DINO_ROPE_COS);
+                    model.minicpm_track_dino_rope_sin  = get_tensor(TN_MT_DINO_ROPE_SIN);
+                    model.minicpm_track_dino_mean      = get_tensor(string_format(TN_MT_IMAGE_MEAN,    "v.dino"));
+                    model.minicpm_track_dino_inv_std   = get_tensor(string_format(TN_MT_IMAGE_INV_STD, "v.dino"));
+
+                    model.minicpm_track_siglip_patch_w   = get_tensor(string_format(TN_MT_PATCH_EMBD, "v.siglip", "weight"));
+                    model.minicpm_track_siglip_patch_b   = get_tensor(string_format(TN_MT_PATCH_EMBD, "v.siglip", "bias"));
+                    model.minicpm_track_siglip_pos       = get_tensor(string_format(TN_POS_EMBD,      "v.siglip"));
+                    model.minicpm_track_siglip_post_ln_w = get_tensor(string_format(TN_LN_POST,       "v.siglip", "weight"));
+                    model.minicpm_track_siglip_post_ln_b = get_tensor(string_format(TN_LN_POST,       "v.siglip", "bias"));
+                    model.minicpm_track_siglip_pool      = get_tensor(TN_MT_SIGLIP_POOL);
+                    model.minicpm_track_siglip_mean      = get_tensor(string_format(TN_MT_IMAGE_MEAN,    "v.siglip"));
+                    model.minicpm_track_siglip_inv_std   = get_tensor(string_format(TN_MT_IMAGE_INV_STD, "v.siglip"));
+
+                    model.minicpm_track_mm_norm_w = get_tensor(TN_MM_INP_NORM);
+                    model.minicpm_track_mm_norm_b = get_tensor(TN_MM_INP_NORM_B);
+                    model.minicpm_track_mm_fc1_w  = get_tensor(string_format(TN_MT_MM_FC1, "weight"));
+                    model.minicpm_track_mm_fc1_b  = get_tensor(string_format(TN_MT_MM_FC1, "bias"));
+                    model.minicpm_track_mm_fc2_w  = get_tensor(string_format(TN_MT_MM_FC2, "weight"));
+                    model.minicpm_track_mm_fc2_b  = get_tensor(string_format(TN_MT_MM_FC2, "bias"));
                  } break;
             case PROJECTOR_TYPE_GEMMA4A:
                 {
@@ -3437,6 +3514,11 @@ int clip_n_output_tokens(const clip_ctx * ctx, const clip_image_f32 * img) {
         case PROJECTOR_TYPE_PHI4:
             {
                 // do nothing
+            } break;
+        case PROJECTOR_TYPE_MINICPM_TRACK:
+            {
+                // coarse (2x2=4) + fine (8x8=64) projected tokens per frame
+                n_patches = 4 + 64;
             } break;
         case PROJECTOR_TYPE_YASA2:
             {
@@ -4667,6 +4749,11 @@ bool clip_image_batch_encode(clip_ctx * ctx, int n_threads, const clip_image_f32
                     }
                 }
             } break;
+        case PROJECTOR_TYPE_MINICPM_TRACK:
+            {
+                // no extra inputs: rope tables, siglip pool matrix and per-tower
+                // normalization are all baked weights; only inp_raw is needed
+            } break;
         default:
             GGML_ABORT("Unknown projector type");
     }
@@ -4831,6 +4918,9 @@ int clip_n_mmproj_embd(const struct clip_ctx * ctx) {
         case PROJECTOR_TYPE_DEEPSEEKOCR:
         case PROJECTOR_TYPE_DEEPSEEKOCR2:
             return ctx->model.mm_fc_w->ne[1];
+        case PROJECTOR_TYPE_MINICPM_TRACK:
+            // VisionProjector output dim (fc2), the backbone hidden size
+            return ctx->model.minicpm_track_mm_fc2_w->ne[1];
         case PROJECTOR_TYPE_LFM2A:
             return ctx->model.position_embeddings->ne[0];
         case PROJECTOR_TYPE_GRANITE_SPEECH:

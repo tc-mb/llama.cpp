@@ -477,6 +477,13 @@ struct mtmd_context {
                     img_end = "<|vision_end|>";
                     image_preproc = std::make_unique<mtmd_image_preprocessor_youtuvl>(ctx_v);
                 } break;
+            case PROJECTOR_TYPE_MINICPM_TRACK:
+                {
+                    // single 384x384 tile per frame; per-tower normalization, pooling
+                    // and projector all run in-graph. No text image markers here
+                    // (the trajectory sequence is assembled by the caller, not mtmd).
+                    image_preproc = std::make_unique<mtmd_image_preprocessor_fixed_size>(ctx_v);
+                } break;
             case PROJECTOR_TYPE_YASA2:
                 {
                     img_beg = "<image>";

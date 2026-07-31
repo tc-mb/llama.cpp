@@ -34,6 +34,10 @@ else()
     add_subdirectory(gen-docs)
     add_subdirectory(training)
     add_subdirectory(diffusion)
+    # links mtmd, which is defined under tools/mtmd
+    if (LLAMA_BUILD_TOOLS)
+        add_subdirectory(minicpm-robottrack)
+    endif()
     if (NOT GGML_BACKEND_DL)
         add_subdirectory(convert-llama2c-to-ggml)
         # these examples use the backends directly and cannot be built with dynamic loading

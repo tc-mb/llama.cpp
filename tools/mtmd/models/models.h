@@ -141,6 +141,29 @@ struct clip_graph_deepseekocr2 : clip_graph_deepseekocr {
     ggml_cgraph * build() override; // reuses build_sam() from base
 };
 
+struct clip_graph_minicpm_track : clip_graph {
+    clip_graph_minicpm_track(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
+    ggml_cgraph * build() override;
+
+    // one generic ViT tower (DINOv3 or SigLIP) over its own layer vector
+    ggml_tensor * build_tower(
+        ggml_tensor * inp,
+        const std::vector<clip_layer> & layers,
+        int n_head_,
+        float attn_scale,
+        float tower_eps,
+        ffn_op_type ffn_t,
+        ggml_tensor * post_ln_w,
+        ggml_tensor * post_ln_b,
+        bool use_dino_rope);
+
+    // DINOv3 axial RoPE via baked cos/sin tables (patch-only; prefix rows are identity)
+    ggml_tensor * apply_dino_rope(ggml_tensor * cur);
+
+    // uniform adaptive-avg-pool of the [C, grid*grid] fused map down to [C, out*out]
+    ggml_tensor * pool_fused(ggml_tensor * fused, int grid, int out);
+};
+
 struct clip_graph_conformer : clip_graph {
     clip_graph_conformer(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
     ggml_cgraph * build() override;

@@ -462,6 +462,7 @@ class MODEL_ARCH(IntEnum):
     INTERNLM2        = auto()
     MINICPM          = auto()
     MINICPM3         = auto()
+    ROBOTTRACK       = auto()
     GEMMA            = auto()
     GEMMA2           = auto()
     GEMMA3           = auto()
@@ -758,6 +759,19 @@ class MODEL_TENSOR(IntEnum):
     CLS                  = auto() # classifier
     CLS_OUT              = auto() # classifier output projection
     CLS_NORM             = auto()
+    TRAJ_TIME_EMBD       = auto() # robottrack: temporal marker tables
+    TRAJ_STREAM_EMBD     = auto()
+    TRAJ_CAMERA_EMBD     = auto()
+    TRAJ_CONTROL         = auto() # robottrack: learned control query
+    TRAJ_NORM_IN         = auto() # robottrack: funnel trajectory head
+    TRAJ_FC1             = auto()
+    TRAJ_FC2             = auto()
+    TRAJ_FC3             = auto()
+    TRAJ_FC4             = auto()
+    TRAJ_FC5             = auto()
+    TRAJ_NORM_OUT        = auto()
+    TRAJ_OUT             = auto()
+    TRAJ_OUT_SCALE       = auto()
     CONV1D               = auto()
     CONVNEXT_DW          = auto()
     CONVNEXT_NORM        = auto()
@@ -1065,6 +1079,7 @@ MODEL_ARCH_NAMES: dict[MODEL_ARCH, str] = {
     MODEL_ARCH.INTERNLM2:        "internlm2",
     MODEL_ARCH.MINICPM:          "minicpm",
     MODEL_ARCH.MINICPM3:         "minicpm3",
+    MODEL_ARCH.ROBOTTRACK:       "robottrack",
     MODEL_ARCH.GEMMA:            "gemma",
     MODEL_ARCH.GEMMA2:           "gemma2",
     MODEL_ARCH.GEMMA3:           "gemma3",
@@ -1360,6 +1375,19 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
     MODEL_TENSOR.CLS:                       "cls",
     MODEL_TENSOR.CLS_OUT:                   "cls.output",
     MODEL_TENSOR.CLS_NORM:                  "cls.norm",
+    MODEL_TENSOR.TRAJ_TIME_EMBD:            "traj.time_embd",
+    MODEL_TENSOR.TRAJ_STREAM_EMBD:          "traj.stream_embd",
+    MODEL_TENSOR.TRAJ_CAMERA_EMBD:          "traj.camera_embd",
+    MODEL_TENSOR.TRAJ_CONTROL:              "traj.control_query",
+    MODEL_TENSOR.TRAJ_NORM_IN:              "traj.norm_in",
+    MODEL_TENSOR.TRAJ_FC1:                  "traj.fc1",
+    MODEL_TENSOR.TRAJ_FC2:                  "traj.fc2",
+    MODEL_TENSOR.TRAJ_FC3:                  "traj.fc3",
+    MODEL_TENSOR.TRAJ_FC4:                  "traj.fc4",
+    MODEL_TENSOR.TRAJ_FC5:                  "traj.fc5",
+    MODEL_TENSOR.TRAJ_NORM_OUT:             "traj.norm_out",
+    MODEL_TENSOR.TRAJ_OUT:                  "traj.out",
+    MODEL_TENSOR.TRAJ_OUT_SCALE:            "traj.output_scale",
     MODEL_TENSOR.CONV1D:                    "conv1d",
     MODEL_TENSOR.CONVNEXT_DW:               "convnext.{bid}.dw",
     MODEL_TENSOR.CONVNEXT_NORM:             "convnext.{bid}.norm",
@@ -2598,6 +2626,34 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
         MODEL_TENSOR.FFN_GATE_EXP,
         MODEL_TENSOR.FFN_DOWN_EXP,
         MODEL_TENSOR.FFN_UP_EXP,
+    ],
+    MODEL_ARCH.ROBOTTRACK: [
+        MODEL_TENSOR.TOKEN_EMBD,
+        MODEL_TENSOR.OUTPUT_NORM,
+        MODEL_TENSOR.ROPE_FACTORS_LONG,
+        MODEL_TENSOR.ROPE_FACTORS_SHORT,
+        MODEL_TENSOR.ATTN_NORM,
+        MODEL_TENSOR.ATTN_Q,
+        MODEL_TENSOR.ATTN_K,
+        MODEL_TENSOR.ATTN_V,
+        MODEL_TENSOR.ATTN_OUT,
+        MODEL_TENSOR.FFN_NORM,
+        MODEL_TENSOR.FFN_GATE,
+        MODEL_TENSOR.FFN_DOWN,
+        MODEL_TENSOR.FFN_UP,
+        MODEL_TENSOR.TRAJ_TIME_EMBD,
+        MODEL_TENSOR.TRAJ_STREAM_EMBD,
+        MODEL_TENSOR.TRAJ_CAMERA_EMBD,
+        MODEL_TENSOR.TRAJ_CONTROL,
+        MODEL_TENSOR.TRAJ_NORM_IN,
+        MODEL_TENSOR.TRAJ_FC1,
+        MODEL_TENSOR.TRAJ_FC2,
+        MODEL_TENSOR.TRAJ_FC3,
+        MODEL_TENSOR.TRAJ_FC4,
+        MODEL_TENSOR.TRAJ_FC5,
+        MODEL_TENSOR.TRAJ_NORM_OUT,
+        MODEL_TENSOR.TRAJ_OUT,
+        MODEL_TENSOR.TRAJ_OUT_SCALE,
     ],
     MODEL_ARCH.MINICPM3: [
         MODEL_TENSOR.TOKEN_EMBD,
@@ -4853,6 +4909,7 @@ class VisionProjectorType:
     GRANITE_SPEECH = "granite_speech"  # audio
     MIMOVL         = "mimovl"
     MIMO_AUDIO     = "mimo_audio"
+    MINICPM_TRACK  = "minicpm_track"
     GRANITE4_VISION = "granite4_vision"
 
 

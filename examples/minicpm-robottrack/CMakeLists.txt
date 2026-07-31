@@ -1,0 +1,5 @@
+set(TARGET llama-minicpm-robottrack)
+add_executable(${TARGET} minicpm-robottrack.cpp)
+install(TARGETS ${TARGET} RUNTIME)
+target_link_libraries(${TARGET} PRIVATE mtmd ggml llama ${CMAKE_THREAD_LIBS_INIT})
+target_compile_features(${TARGET} PRIVATE cxx_std_17)

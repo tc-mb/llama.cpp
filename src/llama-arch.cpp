@@ -51,6 +51,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
     { LLM_ARCH_INTERNLM2,        "internlm2"        },
     { LLM_ARCH_MINICPM,          "minicpm"          },
     { LLM_ARCH_MINICPM3,         "minicpm3"         },
+    { LLM_ARCH_ROBOTTRACK,       "robottrack"       },
     { LLM_ARCH_GEMMA,            "gemma"            },
     { LLM_ARCH_GEMMA2,           "gemma2"           },
     { LLM_ARCH_GEMMA3,           "gemma3"           },
@@ -313,6 +314,9 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
     { LLM_KV_CONVNEXT_BLOCK_COUNT,      "%s.convnext.block_count"      },
 
     { LLM_KV_CLASSIFIER_OUTPUT_LABELS, "%s.classifier.output_labels" },
+    { LLM_KV_ROBOTTRACK_MAX_TIME_STEPS, "%s.max_time_steps" },
+    { LLM_KV_ROBOTTRACK_NUM_WAYPOINTS,  "%s.num_waypoints"  },
+    { LLM_KV_ROBOTTRACK_ACTION_DIM,     "%s.action_dim"     },
 
     { LLM_KV_TARGET_LAYERS,         "%s.target_layers"        },
     { LLM_KV_TARGET_HIDDEN_SIZE,    "%s.target_hidden_size"   },
@@ -427,6 +431,19 @@ static const std::map<llm_tensor, const char *> LLM_TENSOR_NAMES = {
     { LLM_TENSOR_CLS,                                    "cls" },
     { LLM_TENSOR_CLS_OUT,                                "cls.output" },
     { LLM_TENSOR_CLS_NORM,                               "cls.norm" },
+    { LLM_TENSOR_TRAJ_TIME_EMBD,                         "traj.time_embd" },
+    { LLM_TENSOR_TRAJ_STREAM_EMBD,                       "traj.stream_embd" },
+    { LLM_TENSOR_TRAJ_CAMERA_EMBD,                       "traj.camera_embd" },
+    { LLM_TENSOR_TRAJ_CONTROL,                           "traj.control_query" },
+    { LLM_TENSOR_TRAJ_NORM_IN,                           "traj.norm_in" },
+    { LLM_TENSOR_TRAJ_FC1,                               "traj.fc1" },
+    { LLM_TENSOR_TRAJ_FC2,                               "traj.fc2" },
+    { LLM_TENSOR_TRAJ_FC3,                               "traj.fc3" },
+    { LLM_TENSOR_TRAJ_FC4,                               "traj.fc4" },
+    { LLM_TENSOR_TRAJ_FC5,                               "traj.fc5" },
+    { LLM_TENSOR_TRAJ_NORM_OUT,                          "traj.norm_out" },
+    { LLM_TENSOR_TRAJ_OUT,                               "traj.out" },
+    { LLM_TENSOR_TRAJ_OUT_SCALE,                         "traj.output_scale" },
     { LLM_TENSOR_ENC_OUTPUT_NORM,                        "enc.output_norm" },
     { LLM_TENSOR_FFN_GATE_INP_SHEXP,                     "blk.%d.ffn_gate_inp_shexp" },
     { LLM_TENSOR_SSM_A_NOSCAN,                           "blk.%d.ssm_a" },
@@ -636,6 +653,15 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
     {LLM_TENSOR_CLS,                        {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL_MAT}},
     {LLM_TENSOR_CLS_OUT,                    {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL_MAT}},
     {LLM_TENSOR_CLS_NORM,                   {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL}},
+    {LLM_TENSOR_TRAJ_NORM_IN,               {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL}},
+    {LLM_TENSOR_TRAJ_FC1,                   {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL_MAT}},
+    {LLM_TENSOR_TRAJ_FC2,                   {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL_MAT}},
+    {LLM_TENSOR_TRAJ_FC3,                   {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL_MAT}},
+    {LLM_TENSOR_TRAJ_FC4,                   {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL_MAT}},
+    {LLM_TENSOR_TRAJ_FC5,                   {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL_MAT}},
+    {LLM_TENSOR_TRAJ_NORM_OUT,              {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL}},
+    {LLM_TENSOR_TRAJ_OUT,                   {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL_MAT}},
+    {LLM_TENSOR_TRAJ_OUT_SCALE,             {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL}},
     {LLM_TENSOR_DENSE_2_OUT,                {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL_MAT}}, // Dense layer output
     {LLM_TENSOR_DENSE_3_OUT,                {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL_MAT}}, // Dense layer output
     {LLM_TENSOR_OUTPUT_NORM,                {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL}},
@@ -869,6 +895,13 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
     // eagle3
     {LLM_TENSOR_FC,                         {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL_MAT}},
     {LLM_TENSOR_D2T,                        {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_GET_ROWS}},
+    // robottrack: marker/control rows the caller adds to the input sequence itself. They never
+    // enter the graph, so GGML_OP_NONE keeps them out of the model buffers - the caller reads
+    // them straight out of the .gguf (see tools/mtmd/debug/minicpm-robottrack.cpp)
+    {LLM_TENSOR_TRAJ_TIME_EMBD,             {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_NONE}},
+    {LLM_TENSOR_TRAJ_STREAM_EMBD,           {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_NONE}},
+    {LLM_TENSOR_TRAJ_CAMERA_EMBD,           {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_NONE}},
+    {LLM_TENSOR_TRAJ_CONTROL,               {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_NONE}},
 };
 
 LLM_KV::LLM_KV(llm_arch arch, const char * suffix) : arch(arch), suffix(suffix) {}

@@ -233,6 +233,8 @@ static llama_model * llama_model_mapping(llm_arch arch, const llama_model_params
             return new llama_model_granite_moe(params);
         case LLM_ARCH_MINICPM:
             return new llama_model_minicpm(params);
+        case LLM_ARCH_ROBOTTRACK:
+            return new llama_model_robottrack(params);
         case LLM_ARCH_GRANITE_HYBRID:
             return new llama_model_granite_hybrid(params);
         case LLM_ARCH_CHAMELEON:
@@ -2302,6 +2304,9 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
     // add on pooling layer
     llm->build_pooling(cls, cls_b, cls_out, cls_out_b, cls_norm);
 
+    // add on the arch-specific task head (if any)
+    build_arch_head(llm.get());
+
     // add backend sampling layers (if any)
     llm->build_sampling();
 
@@ -2464,6 +2469,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_STARCODER:
         case LLM_ARCH_INTERNLM2:
         case LLM_ARCH_MINICPM:
+        case LLM_ARCH_ROBOTTRACK:
         case LLM_ARCH_XVERSE:
         case LLM_ARCH_COMMAND_R:
         case LLM_ARCH_COHERE2:

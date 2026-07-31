@@ -1566,6 +1566,33 @@ struct llama_model_minicpm : public llama_model_base {
 };
 
 
+// MiniCPM4 backbone + RobotTrack funnel trajectory head. The head turns the pooled
+// hidden state of the trailing control query into n_cls_out floats.
+struct llama_model_robottrack : public llama_model_minicpm {
+    llama_model_robottrack(const struct llama_model_params & params) : llama_model_minicpm(params) {}
+    void load_arch_hparams(llama_model_loader & ml) override;
+    void load_arch_tensors(llama_model_loader & ml) override;
+    void build_arch_head(llm_graph_context * llm) const override;
+
+    uint32_t n_traj_waypoints  = 8;
+    uint32_t n_traj_action_dim = 3;
+
+    // traj.{time,stream,camera}_embd and traj.control_query live in the same .gguf but get no
+    // member here - they never enter the graph, the caller reads those rows from the file itself
+
+    // funnel head: LayerNorm -> 5x (Linear + GELU) -> LayerNorm -> Linear -> tanh
+    struct ggml_tensor * traj_norm_in_w  = nullptr;
+    struct ggml_tensor * traj_norm_in_b  = nullptr;
+    struct ggml_tensor * traj_fc_w[5]    = { nullptr };
+    struct ggml_tensor * traj_fc_b[5]    = { nullptr };
+    struct ggml_tensor * traj_norm_out_w = nullptr;
+    struct ggml_tensor * traj_norm_out_b = nullptr;
+    struct ggml_tensor * traj_out_w      = nullptr;
+    struct ggml_tensor * traj_out_b      = nullptr;
+    struct ggml_tensor * traj_out_scale  = nullptr;
+};
+
+
 struct llama_model_granite_hybrid : public llama_model_base {
     llama_model_granite_hybrid(const struct llama_model_params & params) : llama_model_base(params) {}
     void load_arch_hparams(llama_model_loader & ml) override;

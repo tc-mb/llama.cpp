@@ -1071,6 +1071,9 @@ class ModelBase:
         if "lfm" in config:
             # rename for LFM2-Audio
             config["text_config"] = config["lfm"]
+        if "backbone_config" in config:
+            # rename for MiniCPM-RobotTrack
+            config["text_config"] = config["backbone_config"]
         return config
 
     @classmethod
