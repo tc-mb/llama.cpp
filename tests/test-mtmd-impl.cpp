@@ -140,6 +140,46 @@ MAKE_TEST(test_temporal_merge_grouping) {
 }
 
 //
+// MiniCPM-V 4.7 canvas marker positions
+// reference: transformers get_rope_index, (T, H, W) stored as (z, y, x)
+//
+
+static void expect_pos(testing & t, const mtmd_image_tokens * image_tokens, llama_pos pos_0, size_t i,
+        uint32_t T, uint32_t H, uint32_t W, const std::string & name) {
+    const mtmd_decoder_pos pos = mtmd_image_tokens_get_decoder_pos(image_tokens, pos_0, i);
+    t.assert_equal(name,
+            std::to_string(T) + ", " + std::to_string(H) + ", " + std::to_string(W),
+            std::to_string(pos.z) + ", " + std::to_string(pos.y) + ", " + std::to_string(pos.x));
+}
+
+MAKE_TEST(test_decoder_pos_minicpmv4_7) {
+    const llama_pos pos_0 = 6;
+    {
+        mtmd::input_chunk_ptr chunk(mtmd_test_create_canvas_chunk(5, 2, 2, 2, 7, 2));
+        const mtmd_image_tokens * image = mtmd_input_chunk_get_tokens_image(chunk.get());
+        const size_t n = mtmd_image_tokens_get_n_tokens(image);
+        // overview 5x2, then </image> at the far corner of the 14x4 canvas
+        expect_pos(t, image, pos_0, 0,  5, 5, 5,  "ov origin");
+        expect_pos(t, image, pos_0, 10, 5, 9, 19, "</image>");
+        expect_pos(t, image, pos_0, 11, 5, 5, 5,  "<slice> of S00");
+        expect_pos(t, image, pos_0, 26, 5, 6, 11, "</slice> of S00");
+        std::vector<mtmd_decoder_pos> pos(n);
+        for (size_t i = 0; i < n; i++) {
+            pos[i] = mtmd_image_tokens_get_decoder_pos(image, pos_0, i);
+        }
+        for (size_t i = 1; i < n; i++) {
+            t.assert_true("causal order", std::tie(pos[i - 1].t, pos[i - 1].y, pos[i - 1].x) < std::tie(pos[i].t, pos[i].y, pos[i].x));
+        }
+    }
+    {
+        mtmd::input_chunk_ptr chunk(mtmd_test_create_canvas_chunk(4, 3, 0, 0, 0, 0));
+        const mtmd_image_tokens * image = mtmd_input_chunk_get_tokens_image(chunk.get());
+        expect_pos(t, image, pos_0, 0,  5, 5, 5, "ov origin, no slices");
+        expect_pos(t, image, pos_0, 12, 5, 8, 9, "</image>, no slices");
+    }
+}
+
+//
 // mtmd_audio
 //
 

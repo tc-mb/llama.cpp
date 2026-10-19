@@ -2669,17 +2669,42 @@ static mtmd_decoder_pos mtmd_canvas_decoder_pos(const mtmd_image_tokens * image_
         }
         i -= gw * gh;
 
-        const size_t n_sep = clip_suffix_rows(entries[k].suffix_type).size();
-        if (i < n_sep) {
-            const uint32_t p = t + 1 + i;
+        const auto & seps = clip_suffix_rows(entries[k].suffix_type);
+        if (i < seps.size()) {
+            // H, W stay on the canvas. T (slot z, see rope section order zyxt) stays at the image origin.
+            // slot t stays sequential: it is the KV order, and the 4th rope section, not the spatial frame.
+            uint32_t h;
+            uint32_t w;
+            if (seps[i] == 0) {
+                h = canvas_h;
+                w = canvas_w;
+            } else if (seps[i] == 1) {
+                h = (k / grid.grid_x) * ny;
+                w = (k % grid.grid_x) * nx;
+            } else if (seps[i] == 2) {
+                const uint32_t row = gh - 1;
+                const uint32_t col = gw - 1;
+                if (k == 0) {
+                    h = mtmd_canvas_scale(row, gh, canvas_h);
+                    w = mtmd_canvas_scale(col, gw, canvas_w);
+                } else {
+                    const uint32_t s = k - 1;
+                    h = (s / grid.grid_x) * ny + row;
+                    w = (s % grid.grid_x) * nx + col;
+                }
+            } else {
+                h = ((k - 1) / grid.grid_x + 1) * ny - 1;
+                w = grid.grid_x * nx;
+            }
+            const uint32_t p = t + 1 + (uint32_t) i;
             pos.t = p;
-            pos.x = p;
-            pos.y = p;
-            pos.z = p;
+            pos.x = base + w;
+            pos.y = base + h;
+            pos.z = base;
             return pos;
         }
-        i -= n_sep;
-        t += 1 + n_sep;
+        i -= seps.size();
+        t += 1 + seps.size();
     }
     GGML_ABORT("token index out of range");
 }
@@ -2772,6 +2797,55 @@ llama_pos mtmd_image_tokens_get_n_pos(const mtmd_image_tokens * image_tokens) {
 }
 
 // test function
+
+mtmd_input_chunk * mtmd_test_create_canvas_chunk(int ov_nx, int ov_ny, int n_col, int n_row, int nx, int ny) {
+    mtmd_image_preproc_out preproc_out;
+    preproc_out.overview.set_size({ ov_nx, ov_ny }, true, false);
+    preproc_out.grid_x = n_col;
+    preproc_out.grid_y = n_row;
+    for (int i = 0; i < n_col * n_row; i++) {
+        clip_image_f32 slice;
+        slice.set_size({ nx, ny }, true, false);
+        preproc_out.entries.push_back(std::move(slice));
+    }
+    const bool has_slices = n_col * n_row > 0;
+
+    const int n_row_i = preproc_out.grid_y;
+    const int n_col_i = preproc_out.grid_x;
+    auto & ov = preproc_out.overview;
+    ov.suffix_type = has_slices ? CLIP_SUFFIX_MINICPMV_OV_SLICE : CLIP_SUFFIX_MINICPMV_OV;
+    if (has_slices) {
+        ov.anyres.grid_x = n_col_i;
+        ov.anyres.grid_y = n_row_i;
+    }
+    for (int y = 0; y < n_row_i; y++) {
+        for (int x = 0; x < n_col_i; x++) {
+            auto & suffix = preproc_out.entries[y * n_col_i + x].suffix_type;
+            if (y == n_row_i - 1 && x == n_col_i - 1) {
+                suffix = CLIP_SUFFIX_MINICPMV_LAST;
+            } else if (x == n_col_i - 1) {
+                suffix = CLIP_SUFFIX_MINICPMV_ROW_END;
+            } else {
+                suffix = CLIP_SUFFIX_MINICPMV_SLICE;
+            }
+        }
+    }
+
+    mtmd_image_tokens_ptr image_tokens(new mtmd_image_tokens);
+    image_tokens->pos = MTMD_POS_TYPE_CANVAS;
+    image_tokens->nx = has_slices ? nx : ov_nx;
+    image_tokens->ny = has_slices ? ny : ov_ny;
+    image_tokens->batch_f32.entries.push_back(std::move(ov));
+    for (auto & slice : preproc_out.entries) {
+        image_tokens->batch_f32.entries.push_back(std::move(slice));
+    }
+    return new mtmd_input_chunk{
+        MTMD_INPUT_CHUNK_TYPE_IMAGE,
+        {},
+        std::move(image_tokens),
+        nullptr,
+    };
+}
 
 mtmd_input_chunks * mtmd_test_create_input_chunks() {
     mtmd_input_chunks * chunks = mtmd_input_chunks_init();
