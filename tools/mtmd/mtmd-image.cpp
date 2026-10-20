@@ -115,7 +115,26 @@ struct img_tool {
         int max_pixels = 0;   // 0 = disabled
         // applied before min/max_pixels, so min_pixels can push an edge back above longest_edge
         int longest_edge = 0; // 0 = disabled
+        // follow python smart_resize exactly: double math, round half to even
+        bool py_round = false;
     };
+
+    // copy of smart_resize from transformers qwen2_vl image processor
+    static clip_image_size calc_size_smart_resize_py(int width, int height, const calc_size_opt & opts) {
+        const double f = opts.align_size;
+        int64_t h_bar = static_cast<int64_t>(std::nearbyint(height / f)) * opts.align_size;
+        int64_t w_bar = static_cast<int64_t>(std::nearbyint(width  / f)) * opts.align_size;
+        if (opts.max_pixels > 0 && h_bar * w_bar > opts.max_pixels) {
+            const double beta = std::sqrt(static_cast<double>(height) * width / opts.max_pixels);
+            h_bar = std::max<int64_t>(opts.align_size, static_cast<int64_t>(std::floor(height / beta / f)) * opts.align_size);
+            w_bar = std::max<int64_t>(opts.align_size, static_cast<int64_t>(std::floor(width  / beta / f)) * opts.align_size);
+        } else if (opts.min_pixels > 0 && h_bar * w_bar < opts.min_pixels) {
+            const double beta = std::sqrt(static_cast<double>(opts.min_pixels) / (static_cast<double>(height) * width));
+            h_bar = static_cast<int64_t>(std::ceil(height * beta / f)) * opts.align_size;
+            w_bar = static_cast<int64_t>(std::ceil(width  * beta / f)) * opts.align_size;
+        }
+        return {static_cast<int>(w_bar), static_cast<int>(h_bar)};
+    }
 
     // calculate the size of the **resized** image, while preserving the aspect ratio and
     // aligning to the nearest multiple of align_size ("smart_resize" in transformers code)
@@ -125,6 +144,10 @@ struct img_tool {
         const int height = inp_size.height;
         if (width <= 0 || height <= 0) {
             return {0, 0};
+        }
+        if (opts.py_round) {
+            GGML_ASSERT(opts.longest_edge == 0);
+            return calc_size_smart_resize_py(width, height, opts);
         }
 
         auto round_by_factor = [f = opts.align_size](float x) { return static_cast<int>(std::round(x / static_cast<float>(f))) * f; };
@@ -780,6 +803,7 @@ mtmd_image_preproc_out mtmd_image_preprocessor_dyn_size::preprocess(const clip_i
             /* min_pixels   */ hparams.image_min_pixels,
             /* max_pixels   */ hparams.image_max_pixels,
             /* longest_edge */ 0,
+            /* py_round     */ hparams.image_resize_py_round,
         });
     img_tool::resize(img, resized_image, target_size,
                         hparams.image_resize_algo,
