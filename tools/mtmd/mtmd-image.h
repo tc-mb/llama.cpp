@@ -190,6 +190,18 @@ protected:
     }
 };
 
+// MiniCPM-OCR 1.0 uses the 4.6 stack, but HF find_best_resize aligns to
+// patch_size * n_merge (28 in 4x, 56 in 16x) instead of always patch_size * 4.
+struct mtmd_image_preprocessor_minicpm_ocr : mtmd_image_preprocessor_minicpmv {
+    using mtmd_image_preprocessor_minicpmv::mtmd_image_preprocessor_minicpmv;
+
+protected:
+    int get_slice_align() const override {
+        const int merge = hparams.n_merge > 0 ? hparams.n_merge : 2;
+        return hparams.patch_size * merge;
+    }
+};
+
 // custom llava-uhd slicing logic for LFM2
 // ref: https://github.com/huggingface/transformers/blob/v5.1.0/src/transformers/models/lfm2_vl/image_processing_lfm2_vl_fast.py
 struct mtmd_image_preprocessor_lfm2 : mtmd_image_preprocessor_llava_uhd {

@@ -272,3 +272,23 @@ class MiniCPMV4_7VisionModel(MiniCPMV4_6VisionModel):
             yield self.format_tensor_name(gguf.MODEL_TENSOR.V_TOK_EMBD_SEP, suffix=""), data_torch[ids]
             return
         yield from super().modify_tensors(data_torch, name, bid)
+
+
+# MiniCPM-OCR 1.0 is the 4.6 stack with model_type minicpm_ocr and 4x visual tokens.
+# Resize alignment follows HF find_best_resize (patch_size * n_merge), not the 4.6
+# preprocessor which always aligns to patch_size * 4.
+
+@ModelBase.register("MiniCPMOcrForConditionalGeneration")
+@ModelBase.example("openbmb/MiniCPM-OCR-1.0")
+class MiniCPMOcrTextModel(MiniCPMV4_6TextModel):
+    pass
+
+
+@ModelBase.register("MiniCPMOcrForConditionalGeneration")
+@ModelBase.example("openbmb/MiniCPM-OCR-1.0")
+class MiniCPMOcrVisionModel(MiniCPMV4_6VisionModel):
+    projector_type = gguf.VisionProjectorType.MINICPM_OCR
+
+    def get_downsample_mode(self) -> str:
+        return self.preprocessor_config.get(
+            "downsample_mode", self.global_config.get("downsample_mode", "4x"))
