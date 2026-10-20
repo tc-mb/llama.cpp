@@ -681,6 +681,26 @@ class Qwen3_5TextModel(_Qwen35MRopeMixin, _LinearAttentionVReorderBase):
         self._try_set_pooling_type()
 
 
+@ModelBase.register("Qwen3_5VLForSequenceClassification")
+@ModelBase.example("Qwen/Qwen3.5-2B")
+class Qwen3_5SeqClsModel(Qwen3_5TextModel):
+    # score head on the last token -> cls.output + LAST pooling, outputs num_labels logits
+    model_arch = gguf.MODEL_ARCH.QWEN35
+    no_mtp = True
+
+    def set_gguf_parameters(self):
+        super().set_gguf_parameters()
+        self.gguf_writer.add_pooling_type(gguf.PoolingType.LAST)
+        # AutoConfig stores num_labels as id2label
+        self.gguf_writer.add_embedding_length_out(len(self.hparams["id2label"]))
+
+    def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
+        if name == "score.weight":
+            yield (gguf.TENSOR_NAMES[gguf.MODEL_TENSOR.CLS_OUT] + ".weight", data_torch)
+            return
+        yield from super().modify_tensors(data_torch, name, bid)
+
+
 def _is_openjev_checkpoint(dir_model: Path) -> bool:
     return (dir_model / "helper" / "shim.py").is_file() and (dir_model / "config.json").is_file()
 
