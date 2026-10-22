@@ -52,4 +52,4 @@ Inference on Linux or Mac
 ./build/bin/llama-mtmd-cli -m ../MiniCPM-V-4.7/ggml-model-Q4_K_M.gguf --mmproj ../MiniCPM-V-4.7/mmproj-model-f16.gguf --jinja
 ```
 
-Thinking is off by default for the official MiniCPM-V 4.7 GGUFs (instruct mode). The runtime locks the embedded chat template so `--reasoning auto` does not open an unfinished `<think>` block.
+Thinking is off by default for official MiniCPM-V 4.7 GGUFs (`--reasoning auto`, instruct mode). `--reasoning on`, or a request with `chat_template_kwargs.enable_thinking=true`, opens `<think>`. `--reasoning off` keeps the closed empty think block.

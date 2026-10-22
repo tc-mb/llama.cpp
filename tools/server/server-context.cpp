@@ -1611,6 +1611,11 @@ private:
                 // 2. The chat template supports it
                 const bool template_supports_thinking = params_base.use_jinja && common_chat_templates_support_enable_thinking(chat_templates.get());
                 enable_thinking = params_base.enable_reasoning != 0 && template_supports_thinking;
+                // MiniCPM-V 4.7: auto stays instruct (#1153). --reasoning on still opens <think>.
+                if (params_base.enable_reasoning < 0
+                    && common_chat_templates_minicpmv47_instruct_default(chat_templates.get())) {
+                    enable_thinking = false;
+                }
                 SRV_TRC("%s: chat template, thinking = %d\n", __func__, enable_thinking);
             } catch (const std::exception & e) {
                 SRV_ERR("%s: chat template parsing error: %s\n", __func__, e.what());

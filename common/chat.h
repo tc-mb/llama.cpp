@@ -450,6 +450,11 @@ common_chat_tool_choice common_chat_tool_choice_parse_oaicompat(const std::strin
 
 bool common_chat_templates_support_enable_thinking(const common_chat_templates * chat_templates);
 
+// MiniCPM-V 4.7 HF template opens <think> unless enable_thinking is false.
+// OpenBMB instruct default: --reasoning auto must not force thinking on (#1153).
+// Explicit --reasoning on / enable_thinking=true still opens <think>.
+bool common_chat_templates_minicpmv47_instruct_default(const common_chat_templates * chat_templates);
+
 // Parses a JSON array of messages in OpenAI's chat completion API format.
 std::vector<common_chat_msg> common_chat_msgs_parse_oaicompat(const common_json & messages);
 

@@ -339,6 +339,16 @@ bool common_chat_templates_support_enable_thinking(const common_chat_templates *
     return params.supports_thinking;
 }
 
+bool common_chat_templates_minicpmv47_instruct_default(const common_chat_templates * chat_templates) {
+    if (!chat_templates || !chat_templates->template_default) {
+        return false;
+    }
+    const std::string & src = chat_templates->template_default->source();
+    // MiniCPM media-part join, not Qwen's <|vision_start|><|image_pad|> form.
+    return src.find("ns.parts = ns.parts + ['<|image_pad|>']") != std::string::npos
+        && src.find("enable_thinking is defined and enable_thinking is false") != std::string::npos;
+}
+
 std::vector<common_chat_msg> common_chat_msgs_parse_oaicompat(const json & messages) {
     std::vector<common_chat_msg> msgs;
 
@@ -778,18 +788,6 @@ common_chat_templates_ptr common_chat_templates_init(const struct llama_model * 
                            "message['content']|length == 0) and (message['tool_calls'] is not defined or "
                            "message['tool_calls'] is none or message['tool_calls']|length == 0) %}",
                            "{%- if false %}");
-    }
-
-    // MiniCPM-V 4.7: the HF chat_template opens <think> whenever enable_thinking is not
-    // false. llama.cpp's --reasoning auto injects true, so short JSON-only replies often
-    // end without </think> and land in reasoning_content with empty content
-    // (OpenBMB/MiniCPM-V#1153). OpenBMB's API and GGUF cookbook default to instruct
-    // (thinking off). Lock the embedded template so the closed empty think block is used.
-    // Match the MiniCPM media-part join (not Qwen's <|vision_start|><|image_pad|>... form).
-    if (default_template_src.find("ns.parts = ns.parts + ['<|image_pad|>']") != std::string::npos
-        && default_template_src.find("enable_thinking is defined and enable_thinking is false") != std::string::npos
-        && default_template_src.find("set enable_thinking = false") == std::string::npos) {
-        default_template_src = "{%- set enable_thinking = false -%}\n" + default_template_src;
     }
 
     std::string token_bos = bos_token_override;
