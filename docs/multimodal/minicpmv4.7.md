@@ -52,4 +52,4 @@ Inference on Linux or Mac
 ./build/bin/llama-mtmd-cli -m ../MiniCPM-V-4.7/ggml-model-Q4_K_M.gguf --mmproj ../MiniCPM-V-4.7/mmproj-model-f16.gguf --jinja
 ```
 
-The chat template enables thinking by default. Pass `--chat-template-kwargs '{"enable_thinking": false}'` to `llama-server` to turn it off.
+Thinking is off by default for the official MiniCPM-V 4.7 GGUFs (instruct mode). The runtime locks the embedded chat template so `--reasoning auto` does not open an unfinished `<think>` block.

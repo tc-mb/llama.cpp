@@ -7610,6 +7610,32 @@ static void test_template_generation_prompt() {
         check(tmpls, continuation_content(),   "<|im_start|>assistant\n<think>\nI'm thinking\n</think>\n\nHello, ");
         check(tmpls, continuation_reasoning(), "<|im_start|>assistant\n<think>\nI'm");
     }
+
+    // MiniCPM-V 4.7 GGUF template (opt-out thinking) must lock to instruct under runtime
+    // enable_thinking=true; otherwise JSON-only replies leave content empty (#1153).
+    {
+        const std::string tmpl =
+            "{%- set ns = namespace(parts=[]) -%}"
+            "{%- set ns.parts = ns.parts + ['<|image_pad|>'] -%}"
+            "{%- for message in messages -%}"
+            "{{- '<|im_start|>' + message.role + '\\n' + message.content + '<|im_end|>\\n' -}}"
+            "{%- endfor -%}"
+            "{%- if add_generation_prompt %}"
+            "{{- '<|im_start|>assistant\\n' }}"
+            "{%- if enable_thinking is defined and enable_thinking is false %}"
+            "{{- '<think>\\n\\n</think>\\n\\n' }}"
+            "{%- else %}"
+            "{{- '<think>\\n' }}"
+            "{%- endif %}"
+            "{%- endif %}";
+        auto tmpls = common_chat_templates_ptr(common_chat_templates_init(/* model= */ nullptr, tmpl));
+        common_chat_templates_inputs inputs;
+        inputs.messages = { message_user };
+        inputs.add_generation_prompt = true;
+        inputs.enable_thinking = true;
+        auto params = common_chat_templates_apply(tmpls.get(), inputs);
+        assert_ends_with(params.prompt.str(), "<|im_start|>assistant\n<think>\n\n</think>\n\n");
+    }
 }
 
 // Test the developer role to system workaround with a simple mock template
