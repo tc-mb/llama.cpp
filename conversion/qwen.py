@@ -681,23 +681,63 @@ class Qwen3_5TextModel(_Qwen35MRopeMixin, _LinearAttentionVReorderBase):
         self._try_set_pooling_type()
 
 
-@ModelBase.register("Qwen3_5VLForSequenceClassification")
-@ModelBase.example("Qwen/Qwen3.5-2B")
-class Qwen3_5SeqClsModel(Qwen3_5TextModel):
-    # score head on the last token -> cls.output + LAST pooling, outputs num_labels logits
+def _is_minicpm_ocr_jev_checkpoint(dir_model: Path) -> bool:
+    # the config.json of the checkpoint is the one of a Qwen3.5 VL model, the marker file tells it apart
+    return (dir_model / "minicpm_ocr_jev.json").is_file() and (dir_model / "config.json").is_file()
+
+
+@ModelBase.register_hparams_loader(_is_minicpm_ocr_jev_checkpoint)
+def _load_minicpm_ocr_jev_hparams(dir_model: Path) -> dict[str, Any]:
+    logger.info("gguf: detected MiniCPM-OCR-Jev checkpoint")
+    hparams = ModelBase.load_hparams(dir_model, False, guess=False)
+    hparams["architectures"] = ["MiniCPM-OCR-Jev"]
+    return hparams
+
+
+@ModelBase.register("MiniCPM-OCR-Jev")
+class MiniCPMOCRJevModel(Qwen3_5TextModel):
+    # OCR consistency judge: Qwen3.5 VL trunk with a 2-class value head read at the last token
+    # the class scores are [inconsistent, consistent], the softmax temperature is 1
     model_arch = gguf.MODEL_ARCH.QWEN35
-    no_mtp = True
+    no_mtp = True  # the checkpoint has no MTP head
+
+    N_CLASSES = 2
+
+    def set_vocab(self):
+        super().set_vocab()
+        self.gguf_writer.add_chat_template([{"name": "systemone", "template": self._systemone_template()}])
+
+    def _systemone_template(self) -> str:
+        # the trailing newlines are in an expression, so the template does not drop them
+        return (
+            "<|im_start|>user\n{{ images[0] }}\nOCR\u6587\u672c\uff1a\n{{ state }}\n{{ images[1] }}\n"
+            "\u7b2c\u4e00\u5f20\u56fe\u662f\u539f\u56fe\uff0c\u7b2c\u4e8c\u5f20\u56fe\u662f\u4e0a\u8ff0 OCR \u6587\u672c\u6e32\u67d3\u5f97\u5230\u7684\u56fe\u7247\u3002\n"
+            "\u8bf7\u5224\u65ad\u8be5 OCR \u6587\u672c\u53ca\u5176\u5bf9\u5e94\u6e32\u67d3\u56fe\u662f\u5426\u4e0e\u539f\u56fe\u5185\u5bb9\u4e00\u81f4\u3002\n"
+            "\u8fd9\u662f\u4e00\u4e2a\u4e8c\u5206\u7c7b\u4efb\u52a1\uff1a\u4e00\u81f4\u6807\u4e3a 1\uff0c\u4e0d\u4e00\u81f4\u6807\u4e3a 0\u3002"
+            "{{ '<|im_end|>\\n<|im_start|>assistant\\n<think>\\n\\n</think>\\n\\n' }}"
+        )
 
     def set_gguf_parameters(self):
         super().set_gguf_parameters()
+
+        # num_labels can be given as is, or as id2label by AutoConfig
+        with open(self.dir_model / "config.json", encoding="utf-8") as f:
+            config = json.load(f)
+        n_labels = {n for n in (config.get("num_labels"), len(config.get("id2label") or {}) or None) if n is not None}
+        if n_labels != {self.N_CLASSES}:
+            raise ValueError(f"expected num_labels = {self.N_CLASSES}, got {sorted(n_labels)}")
+        if "score.weight" not in self.model_tensors:
+            raise ValueError("the checkpoint has no score.weight classification head")
+
         self.gguf_writer.add_pooling_type(gguf.PoolingType.LAST)
-        # AutoConfig stores num_labels as id2label
-        self.gguf_writer.add_embedding_length_out(len(self.hparams["id2label"]))
+        self.gguf_writer.add_embedding_length_out(self.N_CLASSES)
+        self.gguf_writer.add_decision_type(gguf.DecisionType.MINICPM_OCR_JEV)
 
     def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
         if name == "score.weight":
-            yield (gguf.TENSOR_NAMES[gguf.MODEL_TENSOR.CLS_OUT] + ".weight", data_torch)
-            return
+            if data_torch.shape[0] != self.N_CLASSES:
+                raise ValueError(f"score.weight must have {self.N_CLASSES} rows, got {data_torch.shape[0]}")
+            name = "classifier.out_proj.weight"  # mapped to cls.output
         yield from super().modify_tensors(data_torch, name, bid)
 
 

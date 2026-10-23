@@ -65,10 +65,16 @@ struct server_decision_context {
             case COMMON_DECISION_TYPE_VLLM_D3:
             case COMMON_DECISION_TYPE_LFM2_D1:
             case COMMON_DECISION_TYPE_LFM2_D1_OMNI:
+            case COMMON_DECISION_TYPE_MINICPM_OCR_JEV:
                 return true;
             default:
                 return false;
         }
+    }
+
+    // false if the model has no trained LM head, text generation is then not available
+    bool can_generate() const {
+        return type != COMMON_DECISION_TYPE_MINICPM_OCR_JEV;
     }
 
     // throw std::invalid_argument on bad input

@@ -1723,9 +1723,11 @@ The number of options of a `choice` question is limited by the model, for exampl
 
 For laya, clef, vllm-d3 and lfm2-d1-omni, the whole prompt is evaluated in one batch: it must fit in `--ubatch-size`. An lfm2-d1-omni prompt is cut to 16384 tokens. For vllm-decision2, the options of a question and the end of the prompt must fit in one batch. A server that runs clef only serves this endpoint, text generation is not available.
 
+minicpm-ocr-jev answers one fixed question: is an OCR text, rendered as an image, consistent with the original image? `state` is the OCR text, as a string without special tokens. `files` (or `images`) has exactly 2 images: the original, then the rendered one, both are required. The request has one question, its `instructions` must be `请判断该 OCR 文本及其对应渲染图是否与原图内容一致。`. It is either a `choice` with the `criteria` `{"0": null, "1": null}`, where `1` means consistent, or a `noul` without `criteria`, which returns the probability of `1`. The model has no LM head, so text generation is not available.
+
 *Image input:*
 
-Image input needs a model that supports it (for example: openjev, clef, pplx-decider, vllm-d3, lfm2-d1, lfm2-d1-omni) and its multimodal projector, see `--mmproj`.
+Image input needs a model that supports it (for example: openjev, clef, pplx-decider, vllm-d3, lfm2-d1, lfm2-d1-omni, minicpm-ocr-jev) and its multimodal projector, see `--mmproj`.
 
 Images can be given in two ways, and both can be used in the same request:
 

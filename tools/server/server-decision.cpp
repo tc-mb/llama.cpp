@@ -19,6 +19,11 @@ static const char * decision_question_type_name(server_decision_question_type ty
 // lev reads noul from a rating scale: 0 = certainly no, 8 = certainly yes
 static const size_t DECISION_LEV_N_RATINGS = 9;
 
+// minicpm-ocr-jev answers one fixed question, its prompt does not read the instructions
+// "Judge whether the OCR text and its rendered image are consistent with the original image."
+static const std::string OCR_JEV_INSTRUCTIONS =
+    "\u8bf7\u5224\u65ad\u8be5 OCR \u6587\u672c\u53ca\u5176\u5bf9\u5e94\u6e32\u67d3\u56fe\u662f\u5426\u4e0e\u539f\u56fe\u5185\u5bb9\u4e00\u81f4\u3002";
+
 static std::string decision_meta_str(const llama_model * model, const std::string & key) {
     char buf[256];
     const int32_t n = llama_model_meta_val_str(model, key.c_str(), buf, sizeof(buf));
@@ -161,6 +166,13 @@ void server_decision_context::init(const llama_model * model) {
             throw std::runtime_error("decision model has no mask token");
         }
         n_options_max = 255;
+    } else if (model_type == COMMON_DECISION_TYPE_MINICPM_OCR_JEV) {
+        // one score per class: [inconsistent, consistent]
+        if (llama_model_n_embd_out(model) != 2) {
+            throw std::runtime_error(string_format("decision model must output 2 class scores, got %d", llama_model_n_embd_out(model)));
+        }
+        n_options_max = 2;
+        choice_sorted = true;
     } else {
         throw std::runtime_error("unsupported decision model type: " + type_name);
     }
@@ -187,6 +199,20 @@ std::vector<server_decision_question> server_decision_context::parse_questions(c
     }
     if (!body.contains("questions") || !body.at("questions").is_object() || body.at("questions").empty()) {
         throw std::invalid_argument("\"questions\" must be a non-empty object");
+    }
+    if (type == COMMON_DECISION_TYPE_MINICPM_OCR_JEV) {
+        // the OCR text goes in the prompt as is, so it must not be read as special tokens
+        const json & state = body.at("state");
+        if (!state.is_string()) {
+            throw std::invalid_argument("\"state\" must be the OCR text");
+        }
+        const std::string text = state.get<std::string>();
+        if (server_decision_escape_special_tokens(text) != text || text.find(get_media_marker()) != std::string::npos) {
+            throw std::invalid_argument("\"state\" must not contain special tokens or media markers");
+        }
+        if (body.at("questions").size() != 1) {
+            throw std::invalid_argument("this model answers exactly one question");
+        }
     }
 
     std::vector<server_decision_question> questions;
@@ -273,6 +299,25 @@ std::vector<server_decision_question> server_decision_context::parse_questions(c
             throw err("\"type\" must be one of: choice, score, noul");
         }
 
+        // the classes are fixed: "0" is inconsistent, "1" is consistent
+        if (type == COMMON_DECISION_TYPE_MINICPM_OCR_JEV) {
+            if (instructions != OCR_JEV_INSTRUCTIONS) {
+                throw err("\"instructions\" must be \"" + OCR_JEV_INSTRUCTIONS + "\"");
+            }
+            if (question.type == SERVER_DECISION_QUESTION_CHOICE) {
+                const auto & opts = question.options;
+                if (opts.size() != 2 || opts[0].key != "0" || opts[1].key != "1" || !opts[0].description.is_null() || !opts[1].description.is_null()) {
+                    throw err("\"criteria\" must be {\"0\": null, \"1\": null}");
+                }
+            } else if (question.type == SERVER_DECISION_QUESTION_NOUL) {
+                if (!criteria.is_null()) {
+                    throw err("\"criteria\" is not supported for a noul question");
+                }
+            } else {
+                throw err("only choice and noul questions are supported");
+            }
+        }
+
         if (question.options.size() > n_options_max) {
             throw err(string_format("too many options (%zu), this model supports at most %zu", question.options.size(), n_options_max));
         }
@@ -323,8 +368,16 @@ json server_decision_context::parse_state(const json & body, std::vector<raw_buf
             throw std::invalid_argument(string_format("\"%s\" must be an array", key));
         }
         for (const auto & url : body.at(key)) {
+            if (type == COMMON_DECISION_TYPE_MINICPM_OCR_JEV && !(url.is_string() && string_starts_with(url.get<std::string>(), "data:image/"))) {
+                throw std::invalid_argument("images must be data URLs (data:image/...;base64,...)");
+            }
             decision_load_image(url, files);
         }
+    }
+
+    // the prompt has the original image, then the image rendered from the OCR text
+    if (type == COMMON_DECISION_TYPE_MINICPM_OCR_JEV && files.size() != 2) {
+        throw std::invalid_argument(string_format("this model needs exactly 2 images (the original, then the rendered one), got %zu", files.size()));
     }
 
     const json & state = body.at("state");
@@ -752,6 +805,17 @@ void server_decision_context::fill_task(
     }
 
     const std::string prompt = render(state, questions, question, variant, files.size());
+
+    if (type == COMMON_DECISION_TYPE_MINICPM_OCR_JEV) {
+        // the class scores are the pooled output, computed at the last token of the prompt
+        task.tokens = process_mtmd_prompt(mctx, prompt, files, init_opt);
+        if (task.n_tokens() == 0 || task.tokens[task.n_tokens() - 1] == LLAMA_TOKEN_NULL) {
+            throw std::runtime_error("unexpected layout of the decision prompt");
+        }
+        task.decision.n_classes          = 2;
+        task.decision.classification_pos = task.n_tokens() - 1;
+        return;
+    }
 
     if (type == COMMON_DECISION_TYPE_OPENJEV || type == COMMON_DECISION_TYPE_LEV || type == COMMON_DECISION_TYPE_NIMBLE || type == COMMON_DECISION_TYPE_PPLX_DECIDER || type == COMMON_DECISION_TYPE_VLLM_D3) {
         // lev reads the ratings of a noul question at its first labels, not at the digits
